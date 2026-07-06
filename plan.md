@@ -568,17 +568,48 @@ type Dimensions struct {
 }
 
 type Config struct {
-	// K is the number of color clusters. More clusters = more detail and larger
-	// output. Clamped relative to input resolution (see bounds below).
-	// Default: 16.
+	// Sensitivity is the PRIMARY, high-level detail dial and the one knob most
+	// callers ever touch. It is an integer PERCENTAGE, 0–100. Default: 50.
+	//
+	//   - Raise it when meaningful detail disappeared (image looks too flat/merged).
+	//   - Lower it when the output shows "strange artifacts" (banding, noise shards).
+	//
+	// Whole-number percent (not a 0.0–1.0 float, not decimals): it is unambiguous to
+	// read/set, and finer precision would be false — Sensitivity maps down to an
+	// integer color count K, which has fewer distinct steps than 0–100 already gives.
+	//
+	// NOTE ON THE ZERO VALUE: 0 is a real setting (0% = maximum posterization), so it
+	// cannot double as "unset." Start from DefaultConfig() rather than a bare
+	// Config{} — see DefaultConfig and §10.
+	//
+	// The engine maps Sensitivity onto a coupled (K, TurdSize) pair along a tuned
+	// curve: higher Sensitivity raises the color count K, while TurdSize is chosen
+	// automatically to suppress the noise speckles a given K would otherwise surface
+	// — held firm through the low-to-mid range and eased off only as you approach
+	// maximum detail. That coupling is what makes a single dial behave intuitively:
+	// raising K on its own floods the output with noise shards, whereas Sensitivity
+	// keeps the mid-range clean and exposes fine noise only near the very top —
+	// exactly where the user learns to "back off a bit."
+	//
+	// If any of the advanced overrides below (K, TurdSize) are set to a non-zero
+	// value, that explicit value wins and is NOT derived from Sensitivity.
+	Sensitivity int
+
+	// --- Advanced overrides (leave zero to derive from Sensitivity) ---
+
+	// K forces an exact number of color clusters. More clusters = more colors/detail
+	// and larger output. Zero => derived from Sensitivity. When set, it is still
+	// clamped relative to input resolution (see bounds below).
 	K int
 
-	// TurdSize is noise suppression: ignore speckle contours smaller than this many
-	// pixels. Passed through to bitrace. Default: 2.
+	// TurdSize forces an exact speckle threshold: ignore contours smaller than this
+	// many pixels. Passed through to bitrace. Zero => derived from Sensitivity.
 	TurdSize int
 
-	// AlphaMax is the corner threshold. Lower = more jagged/angular; higher =
-	// smoother curves. Passed through to bitrace. Default: 1.0.
+	// AlphaMax is the corner threshold — a SEPARATE axis from detail/sensitivity.
+	// Lower = more jagged/angular curves; higher = smoother. It does not change how
+	// much detail is kept, only how the retained outlines are drawn. Passed through
+	// to bitrace. Default: 1.0.
 	AlphaMax float64
 
 	// Optimize enables path simplification + coordinate decimal rounding (in bitrace
@@ -599,11 +630,15 @@ type Config struct {
 	Precision int
 }
 
-// DefaultConfig returns the recommended defaults.
+// DefaultConfig returns the recommended defaults and is the intended entry point
+// (build from it, then tweak). Sensitivity 50 maps to roughly K=16 / TurdSize=2 with
+// the reference mapping; K and TurdSize are left zero so they stay derived from
+// Sensitivity unless the caller overrides them.
 func DefaultConfig() Config {
 	return Config{
-		K:             16,
-		TurdSize:      2,
+		Sensitivity:   50, // 0–100 percent
+		K:             0, // 0 => derived from Sensitivity
+		TurdSize:      0, // 0 => derived from Sensitivity
 		AlphaMax:      1.0,
 		Optimize:      true,
 		MaxDimensions: Dimensions{Width: 2048, Height: 2048},
@@ -613,22 +648,49 @@ func DefaultConfig() Config {
 }
 ```
 
+The reference `Sensitivity → (K, TurdSize)` mapping (calibrated during the tuning pass,
+§13) — treat these as a starting curve, not final numbers:
+
+| `Sensitivity` | Derived `K` | Derived `TurdSize` | Feel |
+| --- | --- | --- | --- |
+| 0 | ~4 | ~8 | Poster/flat: few colors, aggressive noise removal. |
+| 25 | ~8 | ~4 | Simplified. |
+| 50 (default) | ~16 | ~2 | Balanced detail vs. cleanliness. |
+| 75 | ~32 | ~1 | Detailed. |
+| 100 | ~64 | ~0 | Maximum detail; keeps small shapes (accept some noise). |
+
+Note the coupling direction: as `Sensitivity` rises, `K` rises (more color detail) while
+`TurdSize` starts high (aggressive cleanup at the flat/poster end) and relaxes toward 0
+as you approach maximum detail. Because the speckle threshold stays firm through the
+low-to-mid range, the extra micro-clusters a higher `K` surfaces are absorbed rather than
+shown — visible noise appears only near `Sensitivity` 100, where the caller is
+deliberately trading cleanliness for maximum detail.
+
 ### 9.1 Field reference & bounds
 
 | Field | Meaning | Default | Bounds / clamping |
 | --- | --- | --- | --- |
-| `K` | Number of color clusters (detail vs. size). | 16 | Min 2. **Clamp relative to input resolution** to prevent runaway memory: e.g. `K = min(K, maxKForPixels(W*H))`. Never let `K` exceed the number of distinct colors present. |
-| `TurdSize` | Speckle area threshold (px). | 2 | Min 0. 0 disables speckle removal. |
-| `AlphaMax` | Corner/smoothness threshold. | 1.0 | Typically `[0, ~1.334]`; clamp to a sane range. |
+| `Sensitivity` | **Primary detail dial** — integer percent. Drives derived `K` + `TurdSize`. | 50 | Clamp to `[0, 100]`. This is the knob 99% of callers use. 0 is a real value (max posterization), so build from `DefaultConfig()` — a bare `Config{}` means 0%, not the default. |
+| `K` | *Advanced override:* exact color-cluster count. | 0 (derive) | 0 → derive from `Sensitivity`. When set, min 2 and **clamped relative to input resolution** to prevent runaway memory: e.g. `K = min(K, maxKForPixels(W*H))`. Never exceeds the number of distinct colors present. |
+| `TurdSize` | *Advanced override:* speckle area threshold (px). | 0 (derive) | 0 → derive from `Sensitivity`. Set explicitly to force a threshold; a forced 0 disables speckle removal. |
+| `AlphaMax` | Corner/smoothness threshold (separate axis, not detail). | 1.0 | Typically `[0, ~1.334]`; clamp to a sane range. |
 | `Optimize` | Simplification + coordinate rounding. | true | — |
 | `MaxDimensions` | Downsample ceiling (memory bound). | 2048×2048 | Min 1×1. Values ≤ 0 mean "use default". |
 | `Workers` | Tracing concurrency. | `NumCPU()` | ≤ 0 → default. Never spawn more workers than layers `N`. |
 | `Precision` | Coordinate decimal places when `Optimize`. | 2 | 0–6 typical. |
 
-A `Config.normalize()`/`validate()` helper should fill defaults for zero values and
-apply the clamps above before the pipeline runs. Missing/zero fields must yield a
-working default configuration, so `vectrigo.Vectorize(r, w, Config{})` behaves like
-`DefaultConfig()`.
+A `Config.normalize()`/`validate()` helper should fill defaults for zero-valued fields
+and apply the clamps above before the pipeline runs. Most zero fields default cleanly
+(`K`/`TurdSize` derive from `Sensitivity`; `Workers` → `NumCPU()`; `MaxDimensions`/
+`Precision` → their defaults).
+
+**The one exception is `Sensitivity`:** 0 is a legitimate value (0% = maximum
+posterization), so it cannot be auto-promoted to the default — a bare `Config{}` yields
+`Sensitivity == 0`, not 50. Therefore the intended idiom is to **start from
+`DefaultConfig()`** and adjust from there, not to hand-build a `Config{}`. (If a caller
+truly wants `Config{}` to auto-default to 50%, the alternative is to model `Sensitivity`
+as a `*int` where `nil` means "unset"; the plan chooses the plain-`int` + `DefaultConfig()`
+idiom for simplicity.)
 
 ---
 
@@ -644,7 +706,8 @@ import "io"
 
 // Vectorize reads a raster image (PNG/JPEG/WEBP) from r, converts it to SVG using cfg,
 // and writes the SVG document to w. It is stateless and safe for concurrent use.
-// A zero-value Config is treated as DefaultConfig().
+// Build cfg from DefaultConfig() and adjust from there (a bare Config{} means
+// Sensitivity 0% / max posterization, not the default — see §9.1).
 func Vectorize(r io.Reader, w io.Writer, cfg Config) error
 
 // Engine is a reusable, stateless converter. It holds validated configuration and no
@@ -665,7 +728,7 @@ Usage:
 
 ```go
 cfg := vectrigo.DefaultConfig()
-cfg.K = 24
+cfg.Sensitivity = 70 // the primary knob: more detail (0–100)
 if err := vectrigo.Vectorize(inputReader, outputWriter, cfg); err != nil {
 	log.Fatal(err)
 }
@@ -769,9 +832,11 @@ Build the leaf dependencies first so each layer can be tested in isolation.
 3. **Vectrigo engine** (wired via `go.work`). Stage I normalization → Stage II
    quantization → Stage III worker-pool tracing → Stage IV SVG assembly. End-to-end
    tests on sample PNG/JPEG/WEBP images. Public API (`Vectorize`, `Engine`).
-4. **Tuning pass.** Dial in defaults for `K` / `TurdSize` / `AlphaMax`; validate the
-   minification output; verify memory bounds (downsample ceiling + `K` clamp) on large
-   inputs; profile allocations in k-means and tracing.
+4. **Tuning pass.** Calibrate the `Sensitivity → (K, TurdSize)` mapping curve (§9) on a
+   representative image set so the 0–100 dial feels linear and mid-range output stays
+   clean; dial in defaults for `AlphaMax`; validate the minification output; verify
+   memory bounds (downsample ceiling + `K` clamp) on large inputs; profile allocations
+   in k-means and tracing.
 
 Definition of done for each milestone: builds with `CGO_ENABLED=0`, passes `go vet` and
 `go test ./...`, ships godoc + examples, and (for modules 1–2) is extraction-ready.

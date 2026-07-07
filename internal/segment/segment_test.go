@@ -231,6 +231,184 @@ func TestTransparentPixelsExcluded(t *testing.T) {
 	}
 }
 
+// regionAreas returns the pixel count of each dense region id in r.
+func regionAreas(r Result) []int {
+	a := make([]int, r.NumRegions)
+	for _, lb := range r.Labels {
+		if lb >= 0 {
+			a[lb]++
+		}
+	}
+	return a
+}
+
+// interRegionBoundary counts undirected 4-connected pixel adjacencies whose two
+// pixels carry different (opaque) labels. It is a proxy for boundary
+// length/roughness: a straighter, less jagged partition has fewer such
+// adjacencies.
+func interRegionBoundary(r Result) int {
+	w, h := r.W, r.H
+	count := 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := y*w + x
+			lb := r.Labels[i]
+			if lb < 0 {
+				continue
+			}
+			if x+1 < w {
+				if o := r.Labels[i+1]; o >= 0 && o != lb {
+					count++
+				}
+			}
+			if y+1 < h {
+				if o := r.Labels[i+w]; o >= 0 && o != lb {
+					count++
+				}
+			}
+		}
+	}
+	return count
+}
+
+// TestBoundarySmoothReducesJaggedness builds two large regions separated by a
+// deliberately staircased (square-wave) boundary and checks that smoothing both
+// reduces the boundary roughness and keeps a valid two-region partition.
+func TestBoundarySmoothReducesJaggedness(t *testing.T) {
+	const w, h = 48, 48
+	colA := color.NRGBA{200, 40, 40, 255}
+	colB := color.NRGBA{40, 40, 200, 255}
+	img := solidImage(w, h, func(x, y int) color.NRGBA {
+		// Square-wave boundary: the split column alternates by ±3 every 3 rows,
+		// producing a jagged staircase between the two solid halves.
+		split := 24
+		if (y/3)%2 == 0 {
+			split += 3
+		} else {
+			split -= 3
+		}
+		if x < split {
+			return colA
+		}
+		return colB
+	})
+
+	base := Segment(img, Options{K: 500, MinSize: 0})
+	if base.NumRegions != 2 {
+		t.Fatalf("base NumRegions = %d, want 2", base.NumRegions)
+	}
+	beforeBoundary := interRegionBoundary(base)
+
+	sm := Segment(img, Options{K: 500, MinSize: 0, BoundarySmooth: 8})
+	if sm.NumRegions != 2 {
+		t.Fatalf("smoothed NumRegions = %d, want 2 (both regions must survive)", sm.NumRegions)
+	}
+	assertDense(t, sm)
+	assertContiguous(t, sm)
+
+	afterBoundary := interRegionBoundary(sm)
+	if afterBoundary >= beforeBoundary {
+		t.Fatalf("boundary roughness did not drop: before=%d after=%d", beforeBoundary, afterBoundary)
+	}
+}
+
+// TestBoundarySmoothPreservesSmallRegion is the critical text-preservation
+// guarantee: a tiny 3×3 region surrounded by a contrasting background must still
+// exist, with its exact pixel count, after smoothing. Without the small-region
+// freeze the mode filter would erode the 3×3 block to nothing within a couple of
+// iterations, so this test is non-vacuous.
+func TestBoundarySmoothPreservesSmallRegion(t *testing.T) {
+	const w, h = 40, 40
+	bg := color.NRGBA{20, 20, 20, 255}
+	fg := color.NRGBA{230, 230, 230, 255}
+	img := solidImage(w, h, func(x, y int) color.NRGBA {
+		if x >= 18 && x < 21 && y >= 18 && y < 21 { // 3×3 block, area 9
+			return fg
+		}
+		return bg
+	})
+
+	// MinSize 0 so the block is not merged away first; the default freeze floor
+	// (defaultSmoothProtect = 16 >= 9) must still protect it.
+	base := Segment(img, Options{K: 50, MinSize: 0})
+	if base.NumRegions != 2 {
+		t.Fatalf("base NumRegions = %d, want 2 (background + 3×3 block)", base.NumRegions)
+	}
+
+	sm := Segment(img, Options{K: 50, MinSize: 0, BoundarySmooth: 8})
+	if sm.NumRegions != 2 {
+		t.Fatalf("smoothed NumRegions = %d, want 2 (tiny region must survive)", sm.NumRegions)
+	}
+	assertDense(t, sm)
+	assertContiguous(t, sm)
+
+	// The tiny region must retain its exact 9 pixels and its fg colour.
+	areas := regionAreas(sm)
+	means := MeanColors(img, sm)
+	foundTiny := false
+	for id, a := range areas {
+		if a == 9 {
+			foundTiny = true
+			m := means[id]
+			if m.R != fg.R || m.G != fg.G || m.B != fg.B {
+				t.Fatalf("tiny region colour = %v, want fg %v", m, fg)
+			}
+		}
+	}
+	if !foundTiny {
+		t.Fatal("tiny 3×3 region was eroded by smoothing: no region of area 9 remains")
+	}
+}
+
+// TestBoundarySmoothDeterministic verifies identical (img, Options) inputs with
+// smoothing enabled produce identical Labels.
+func TestBoundarySmoothDeterministic(t *testing.T) {
+	const w, h = 50, 50
+	img := solidImage(w, h, func(x, y int) color.NRGBA {
+		v := uint8((x*7 + y*13) % 256)
+		return color.NRGBA{v, uint8((x * 3) % 256), uint8((y * 5) % 256), 255}
+	})
+	opt := Options{K: 200, MinSize: 4, Sigma: 0.8, BoundarySmooth: 5}
+	a := Segment(img, opt)
+	b := Segment(img, opt)
+	if a.NumRegions != b.NumRegions {
+		t.Fatalf("NumRegions differ across runs: %d vs %d", a.NumRegions, b.NumRegions)
+	}
+	if !reflect.DeepEqual(a.Labels, b.Labels) {
+		t.Fatal("Labels differ across identical smoothed runs: not deterministic")
+	}
+}
+
+// TestBoundarySmoothZeroIsNoop confirms BoundarySmooth == 0 is exactly the
+// pre-existing behaviour (back-compat) and that a positive count actually
+// changes a jagged partition, i.e. the field is wired and 0 truly disables it.
+func TestBoundarySmoothZeroIsNoop(t *testing.T) {
+	const w, h = 48, 48
+	img := solidImage(w, h, func(x, y int) color.NRGBA {
+		split := 24
+		if (y/3)%2 == 0 {
+			split += 3
+		} else {
+			split -= 3
+		}
+		if x < split {
+			return color.NRGBA{200, 40, 40, 255}
+		}
+		return color.NRGBA{40, 40, 200, 255}
+	})
+
+	noField := Segment(img, Options{K: 500, MinSize: 0})
+	zero := Segment(img, Options{K: 500, MinSize: 0, BoundarySmooth: 0})
+	if !reflect.DeepEqual(noField.Labels, zero.Labels) {
+		t.Fatal("BoundarySmooth:0 changed the output; zero value must be a no-op")
+	}
+
+	smoothed := Segment(img, Options{K: 500, MinSize: 0, BoundarySmooth: 8})
+	if reflect.DeepEqual(noField.Labels, smoothed.Labels) {
+		t.Fatal("BoundarySmooth:8 produced identical labels; smoothing had no effect")
+	}
+}
+
 func TestEmptyImage(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 0, 0))
 	r := Segment(img, Options{K: 100})

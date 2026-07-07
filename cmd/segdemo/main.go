@@ -5,12 +5,14 @@
 //
 // Usage:
 //
-//	segdemo <input.png> <K> <minSize> <prefilter> <sigmaOrSpatial> [rangeSigma] [out.svg]
+//	segdemo <input.png> <K> <minSize> <prefilter> <sigmaOrSpatial> [rangeSigma] [boundarySmooth] [out.svg]
 //
 // where <prefilter> is one of none, gaussian, bilateral, kuwahara. For none no
 // smoothing parameters are read. For gaussian and kuwahara <sigmaOrSpatial> is
 // the blur sigma / window radius. For bilateral <sigmaOrSpatial> is the spatial
-// sigma and <rangeSigma> the range (colour) sigma.
+// sigma and <rangeSigma> the range (colour) sigma. The optional
+// <boundarySmooth> integer, if present after the filter parameters, is the
+// number of region-boundary smoothing iterations (0 = off, the default).
 //
 // The legacy form
 //
@@ -52,7 +54,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: segdemo <input.png> <K> <minSize> <prefilter> <sigmaOrSpatial> [rangeSigma] [out.svg]")
+		return fmt.Errorf("usage: segdemo <input.png> <K> <minSize> <prefilter> <sigmaOrSpatial> [rangeSigma] [boundarySmooth] [out.svg]")
 	}
 	inPath := args[0]
 	k, err := strconv.ParseFloat(args[1], 64)
@@ -156,6 +158,7 @@ func run(args []string) error {
 
 	fmt.Printf("regions:     %d\n", res.NumRegions)
 	fmt.Printf("paths:       %d\n", pathCount)
+	fmt.Printf("boundarySmooth: %d iters\n", opt.BoundarySmooth)
 	fmt.Printf("output:      %s (%d bytes)\n", outPath, fi.Size())
 	fmt.Printf("dimensions:  working %dx%d, original %dx%d\n", w, h, img.OrigW, img.OrigH)
 	fmt.Printf("prefilter:   %s\n", filterDesc(opt))
@@ -199,9 +202,7 @@ func parseFilterArgs(rest []string, opt *segment.Options, outPath *string) error
 				idx++
 			}
 		}
-		if idx < len(rest) {
-			*outPath = rest[idx]
-		}
+		parseTail(rest[idx:], opt, outPath)
 		return nil
 	}
 	// Legacy form: rest[0] is the Gaussian sigma.
@@ -214,6 +215,25 @@ func parseFilterArgs(rest []string, opt *segment.Options, outPath *string) error
 		*outPath = rest[1]
 	}
 	return nil
+}
+
+// parseTail interprets the arguments that follow the pre-filter parameters as
+// an optional [boundarySmooth] [out.svg] pair: a leading integer is taken as the
+// boundary-smoothing iteration count, and the next (non-integer) argument as the
+// output path. This lets the demo exercise smoothing, e.g. "... bilateral 3 30 3
+// out.svg" (3 smoothing iterations) versus "... bilateral 3 30 out.svg" (none).
+func parseTail(rest []string, opt *segment.Options, outPath *string) {
+	if len(rest) == 0 {
+		return
+	}
+	i := 0
+	if iters, err := strconv.Atoi(rest[0]); err == nil {
+		opt.BoundarySmooth = iters
+		i = 1
+	}
+	if i < len(rest) {
+		*outPath = rest[i]
+	}
 }
 
 // parseFilterName maps a prefilter name to its PreFilter value.

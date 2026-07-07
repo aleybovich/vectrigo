@@ -25,6 +25,10 @@
 // sequence; union-by-size ties break on the lower root index; and dense region
 // ids are assigned in row-major order of first appearance. No maps drive any
 // order-dependent step, and there is no use of math/rand or the wall clock.
+// Optional boundary smoothing is likewise deterministic: each mode-filter pass
+// is a pure function of the previous label buffer (double-buffered, fixed
+// row-major traversal, lowest-label-id tie-break) and the final
+// connected-component relabel assigns ids in row-major first-appearance order.
 //
 // # Tuning region count
 //
@@ -112,6 +116,22 @@ type Options struct {
 	// bilateral filter: smaller values preserve more edges, larger values
 	// blend across bigger colour differences. Only PreFilterBilateral uses it.
 	RangeSigma float64
+
+	// BoundarySmooth is the number of boundary-smoothing iterations applied to
+	// the region label map AFTER region formation and the MinSize merge, to
+	// round off the pixel-staircase jaggies (tiny 1–2px protrusions and notches)
+	// that otherwise make traced region outlines look distorted. Each iteration
+	// is a deterministic label-map mode (majority) filter: a boundary pixel may
+	// flip to the dominant neighbouring region label, so convex teeth erode and
+	// concave notches fill, leaving smoother outlines. See smooth.go for the
+	// technique, the small-region freeze that protects sign lettering, and the
+	// connected-component re-labelling that guarantees a valid partition.
+	//
+	// The zero value (the default) disables smoothing entirely, so Options with
+	// BoundarySmooth unset produce byte-for-byte the same Labels as before this
+	// field existed. A few iterations (1–5) suffice; cost is O(BoundarySmooth ·
+	// W · H).
+	BoundarySmooth int
 }
 
 // Result holds a per-pixel region labelling produced by Segment.
@@ -184,6 +204,17 @@ func Segment(img *image.NRGBA, opt Options) Result {
 	}
 
 	res.NumRegions = relabel(dsu, opaque, n, res.Labels)
+
+	// Optional boundary smoothing (technique A, label-map mode filter). Applied
+	// after region formation / MinSize merge and after the dense relabel, then
+	// re-densified by connected component so the output stays a valid, connected
+	// partition. Skipped entirely when BoundarySmooth == 0, preserving the exact
+	// pre-existing output. MeanColors is computed by the caller on these final
+	// labels, so region colours match the smoothed regions.
+	if opt.BoundarySmooth > 0 {
+		smoothBoundaries(res.Labels, w, h, res.NumRegions, opt.MinSize, opt.BoundarySmooth)
+		res.NumRegions = relabelConnected(res.Labels, w, h)
+	}
 	return res
 }
 

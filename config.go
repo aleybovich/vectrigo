@@ -3,6 +3,8 @@ package vectrigo
 import (
 	"math"
 	"runtime"
+
+	"github.com/aleybovich/segment"
 )
 
 const (
@@ -14,6 +16,18 @@ const (
 	// maxAutoKTau is the upper clamp for [Config.AutoKTau]. Beyond this even
 	// simple images start under-counting real colours.
 	maxAutoKTau = 0.5
+
+	// defaultPhotoDetail is the bilateral range-sigma (σ_r) used for photo mode
+	// when [Config.PhotoDetail] is unset (<= 0) or NaN. It equals
+	// segment.DefaultRangeSigma (12), the balanced detail-vs-smoothness point.
+	// See [Config.PhotoDetail].
+	defaultPhotoDetail = segment.DefaultRangeSigma
+
+	// minPhotoDetail and maxPhotoDetail bound [Config.PhotoDetail] to a sane
+	// band. Below ~4 the bilateral filter barely smooths and region count (and
+	// file size) explode; above ~60 the image dissolves into a few soft blobs.
+	minPhotoDetail = 4
+	maxPhotoDetail = 60
 )
 
 // Dimensions is a width/height pair in pixels.
@@ -118,6 +132,37 @@ type Config struct {
 	// Precision is the coordinate decimal-place count used when Optimize is on.
 	// Default 2. Clamped to [0,6].
 	Precision int
+
+	// Photo selects the region-first PHOTO pipeline (Felzenszwalb graph
+	// segmentation via github.com/aleybovich/segment) instead of the default
+	// colour-quantization pipeline. Default false.
+	//
+	// Quantization clusters pixels globally by colour and is crisper on flat /
+	// logo art, so it stays the default. Photo mode partitions the image into
+	// many small spatially-connected regions, each given its own mean colour and
+	// traced, which preserves local detail far better on PHOTOGRAPHIC content.
+	//
+	// Photo is an EITHER/OR with the quantization knobs: when true, Sensitivity,
+	// K, AutoK, AutoKTau and TurdSize have NO effect (there is no colour
+	// clustering). The detail dial for photo mode is [Config.PhotoDetail]
+	// instead. AlphaMax, Optimize, Precision, Workers and MaxDimensions still
+	// apply. When Photo is false the output is byte-identical to the historical
+	// quantization output regardless of PhotoDetail.
+	Photo bool
+
+	// PhotoDetail is the bilateral range-sigma (σ_r) detail dial for photo mode
+	// (see [Config.Photo]); it is the primary detail-vs-smoothness knob and has
+	// NO effect when Photo is false.
+	//
+	// 0 (a bare Config{}, and DefaultConfig's value) means the default,
+	// segment.DefaultRangeSigma = 12. In [Config.normalized] it is resolved
+	// (0/NaN → 12) and clamped to [4, 60]. Guidance (see segment's RangeSigma
+	// doc):
+	//   - ~8: punchy but region count climbs; faces can look over-segmented.
+	//   - ~12 (default): balanced — preserves facial contrast and small text
+	//     while denoising smooth gradients into clean regions.
+	//   - ~28+: soft / abstract — low-contrast shading and small text blend away.
+	PhotoDetail float64
 }
 
 // DefaultConfig returns the recommended defaults and is the intended entry
@@ -135,6 +180,8 @@ func DefaultConfig() Config {
 		MaxDimensions: Dimensions{Width: 2048, Height: 2048},
 		Workers:       0,
 		Precision:     2,
+		Photo:         false,
+		PhotoDetail:   defaultPhotoDetail,
 	}
 }
 
@@ -177,6 +224,15 @@ func (c Config) normalized() Config {
 	if c.K < 0 {
 		c.K = 0
 	}
+
+	// PhotoDetail: zero value (and NaN) means "use the default"; then clamp to
+	// the sane band. Inert when Photo is false, but resolved unconditionally so
+	// a photo-mode Engine always sees a valid σ_r.
+	if math.IsNaN(c.PhotoDetail) || c.PhotoDetail <= 0 {
+		c.PhotoDetail = defaultPhotoDetail
+	}
+	c.PhotoDetail = clampFloat(c.PhotoDetail, minPhotoDetail, maxPhotoDetail)
+
 	return c
 }
 

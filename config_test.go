@@ -109,6 +109,40 @@ func TestAutoKTauNormalization(t *testing.T) {
 	}
 }
 
+func TestPhotoDetailNormalization(t *testing.T) {
+	// DefaultConfig carries the documented default and survives normalization.
+	if got := DefaultConfig().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("DefaultConfig().PhotoDetail = %v, want %v", got, defaultPhotoDetail)
+	}
+	if got := DefaultConfig().normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("normalized DefaultConfig PhotoDetail = %v, want %v", got, defaultPhotoDetail)
+	}
+	// Bare zero value resolves to the default (12).
+	if got := (Config{}).normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("bare Config{} PhotoDetail = %v, want default %v", got, defaultPhotoDetail)
+	}
+	// Negative resolves to the default.
+	if got := (Config{PhotoDetail: -3}).normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("negative PhotoDetail => %v, want default %v", got, defaultPhotoDetail)
+	}
+	// NaN resolves to the default.
+	if got := (Config{PhotoDetail: math.NaN()}).normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("NaN PhotoDetail => %v, want default %v", got, defaultPhotoDetail)
+	}
+	// Below the band clamps up to the minimum.
+	if got := (Config{PhotoDetail: 1}).normalized().PhotoDetail; got != minPhotoDetail {
+		t.Errorf("below-band PhotoDetail => %v, want clamped %v", got, minPhotoDetail)
+	}
+	// Above the band clamps down to the maximum.
+	if got := (Config{PhotoDetail: 999}).normalized().PhotoDetail; got != maxPhotoDetail {
+		t.Errorf("above-band PhotoDetail => %v, want clamped %v", got, maxPhotoDetail)
+	}
+	// An in-band value passes through untouched.
+	if got := (Config{PhotoDetail: 20}).normalized().PhotoDetail; got != 20 {
+		t.Errorf("in-band PhotoDetail => %v, want 20", got)
+	}
+}
+
 func TestOverridesWin(t *testing.T) {
 	// Explicit K survives (resolution large enough not to clamp).
 	cfg := DefaultConfig()

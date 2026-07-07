@@ -20,6 +20,9 @@ type Options struct {
 	// Precision is the number of coordinate decimal places used when Optimize
 	// is set.
 	Precision int
+	// StrokeWidth is the seam-sealing stroke width used by [WriteSegmented]
+	// only (ignored by [WriteSVG]). <= 0 means [DefaultSegmentStrokeWidth].
+	StrokeWidth float64
 }
 
 // WriteSVG orders the traced layers via [Order] (containment-aware, area-

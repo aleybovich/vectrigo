@@ -3,39 +3,16 @@
 Vectrigo is a portable, high-performance, **pure-Go** engine that converts raster
 images (**PNG / JPEG / WEBP**) into clean, scalable **SVG vector paths**.
 
-It reads from an `io.Reader` and writes to an `io.Writer`, holds no global state,
-and is safe to invoke concurrently from many goroutines.
+## Features
 
-## Non-negotiable constraints
-
-These are **hard requirements**, not trade-offs. Any change that violates one is a
-defect.
-
-### Pure Go only — no cgo
-
-- The build must succeed with `CGO_ENABLED=0`.
-- No `os/exec`, no shell-outs, no spawning external binaries or processes.
-- No external binary or system-library dependency of any kind (no ImageMagick,
-  no libpng, no Potrace binary, etc.).
-- Must **cross-compile cleanly** for any `GOOS`/`GOARCH` with a single `go build`
-  (e.g. `linux/amd64`, `linux/arm64`, `darwin/arm64`, `windows/amd64`, `js/wasm`).
-
-### Permissive licenses only
-
-Every dependency — direct or transitive — carries a **permissive** license. The
-allow-list is: MIT, BSD-2-Clause / BSD-3-Clause, Apache-2.0, ISC, zlib, and
-Unlicense / public-domain code dedications. Copyleft licenses (GPL / LGPL / AGPL,
-any version) and non-software licenses (e.g. Creative Commons such as CC-BY-4.0)
-are **forbidden**. Keeping the whole dependency graph permissive means Vectrigo
-is free to set its own license terms (see [License](#license)) without inheriting
-any copyleft obligations.
-
-### Stateless engine, streaming I/O
-
-- Input is an `io.Reader`; output is an `io.Writer`. No temp files, no on-disk
-  caches.
-- No global mutable state. All state lives on the stack or in per-call structs, so
-  a single `Engine` is safe to share and use concurrently across goroutines.
+- **Pure Go, zero dependencies on C or system libraries.** Builds with
+  `CGO_ENABLED=0` and cross-compiles to any `GOOS`/`GOARCH` with a single
+  `go build` — Linux, macOS, Windows, ARM, WASM, no extra toolchain needed.
+- **Stateless, streaming engine.** Reads from an `io.Reader`, writes to an
+  `io.Writer`. No temp files, no global state — a single `Engine` instance is
+  safe to share and call concurrently from many goroutines.
+- **Two pipelines** — colour-quantization for crisp logos/icons and
+  region-segmentation for photographic content (see [Architecture](#architecture-two-pipelines)).
 
 ## Install
 
@@ -43,7 +20,7 @@ any copyleft obligations.
 go get github.com/aleybovich/vectrigo
 ```
 
-Build with cgo disabled to enforce the pure-Go constraint:
+No C compiler or external libraries required — a plain `go build` is all you need:
 
 ```sh
 CGO_ENABLED=0 go build ./...
@@ -260,9 +237,8 @@ Vectrigo — the engine and the `vectrigo-cli` command — is licensed under the
 noncommercial use.** Commercial use is not granted by that license and requires a
 separate commercial license from the copyright holder — contact Andrey Leybovich.
 
-This split is possible precisely because every dependency is permissively
-licensed, which lets Vectrigo set its own terms. Third-party components and their
-licenses are reproduced in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+Third-party components and their licenses are reproduced in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 It bundles two in-house libraries, each independently licensed with its own
 `LICENSE` file: [`bitrace`](bitrace/) (PolyForm Noncommercial 1.0.0) and

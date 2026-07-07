@@ -20,6 +20,17 @@ import (
 // keeping the exact shared-boundary tiling that makes photo mode seam-free.
 const photoBoundarySmooth = 3
 
+// photoBoundarySimplify is the shared-boundary simplification tolerance (max
+// perpendicular deviation, in working-image pixels) applied to region-boundary
+// chains in photo mode when [Config.Optimize] is on (see
+// [regiontrace.Options.Simplify]). Smoothing leaves straight edges as long
+// runs of NEARLY collinear corners, so without this every boundary pixel of a
+// straight edge becomes an output node. The drop decisions are made once on
+// the shared corner graph, so neighbouring regions stay exactly tight — no
+// seams open. ~1/3 px is visually lossless at crispEdges rendering while
+// collapsing straight runs to their endpoints.
+const photoBoundarySimplify = 0.35
+
 // Vectorize reads a raster image (PNG/JPEG/WEBP) from r, converts it to SVG
 // using cfg, and writes the SVG document to w. It is stateless and safe for
 // concurrent use.
@@ -116,8 +127,13 @@ func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
 
 	// Trace the whole label map as one planar subdivision: adjacent regions share
 	// exact boundary geometry, so filled regions tile the plane gapless — no
-	// background is needed.
-	regions := regiontrace.Trace(res.Labels, res.W, res.H, res.NumRegions, regiontrace.Options{Smooth: photoBoundarySmooth})
+	// background is needed. Simplification is lossy (sub-pixel), so it rides the
+	// Optimize switch like coordinate rounding does.
+	traceOpt := regiontrace.Options{Smooth: photoBoundarySmooth}
+	if e.cfg.Optimize {
+		traceOpt.Simplify = photoBoundarySimplify
+	}
+	regions := regiontrace.Trace(res.Labels, res.W, res.H, res.NumRegions, traceOpt)
 
 	// Per-region pixel area (region id -> pixel count) drives the largest-first
 	// paint order in the assembler.

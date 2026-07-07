@@ -198,6 +198,36 @@ vectrigo-cli -i photo.png --photo --edge stroke      # => photo.photo.svg (strok
 `--photo` (`--edge` takes `crisp` or `stroke`; unset means crisp), and the output
 is written next to the input with a `.photo.svg` extension.
 
+## Architecture: two pipelines
+
+Vectrigo has **two vectorization pipelines**. `Convert` (in `vectrigo.go`)
+decodes the raster once, then branches on `Config.Photo`:
+
+- **Quantization — colour-first (default).** Cluster the pixels globally into
+  `K` palette colours, then trace each colour's mask. Crisp on flat / logo /
+  icon art. This is the default; on it, `Sensitivity` / `AutoK` / `K` etc. apply.
+- **Segmentation — region-first (`--photo`, opt-in).** Split the image into many
+  small, spatially-connected regions, colour each by its mean, then trace the
+  whole label map as **one planar subdivision** (adjacent regions share their
+  exact boundary, so fills tile with no seams). Far better on photographic /
+  painterly images. Enabled by `Config.Photo` / `--photo`.
+
+Both share the front-end (decode/normalize/optional downsample) and the SVG
+writer (`minisvg`). Stage-by-stage:
+
+| Stage | Quantization (default) | Segmentation (`Photo`) |
+|---|---|---|
+| Decode / normalize | `internal/normalize` | `internal/normalize` |
+| Colour → regions | `internal/quantize` (seeded k-means → `K` colours) | `segment/` (Felzenszwalb graph segmentation → regions) |
+| Trace to paths | `internal/pipeline` → `bitrace/` (one mask per colour) | `internal/regiontrace` (shared-boundary planar subdivision) |
+| Assemble SVG | `internal/assemble.WriteSVG` | `internal/assemble.WriteRegions` |
+| Output | `minisvg` | `minisvg` |
+
+The repo is four modules: the root engine `github.com/aleybovich/vectrigo`
+(PolyForm NC) plus three sibling libraries — [`bitrace`](bitrace/) (bitmap
+tracer, PolyForm NC), [`segment`](segment/) (image segmentation, MIT), and
+[`minisvg`](minisvg/) (SVG writer, MIT).
+
 ## Configuration reference
 
 Every field of `vectrigo.Config`, with its type, default (as set by

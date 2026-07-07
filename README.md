@@ -126,7 +126,7 @@ would add detail with diminishing returns.
   that reflect their complexity — at the cost of coarser output. Push it too high
   and even simple images start losing real colours.
 
-### Photo mode (`Photo` / `PhotoDetail` / `PhotoEdge`)
+### Photo mode (`Photo` / `PhotoDetail` / `PhotoSimplify` / `PhotoEdge`)
 
 The default pipeline **quantizes** colours — it clusters pixels globally by
 colour, which is crisp on flat / logo art and is the right choice there. For
@@ -138,9 +138,10 @@ filled regions **tile the plane with no seams** — no background is needed.
 
 ```go
 cfg := vectrigo.DefaultConfig()
-cfg.Photo = true                          // segmentation photo pipeline (best for photos)
-cfg.PhotoDetail = 8                        // optional σ_r detail dial; 0 keeps the default (12)
-cfg.PhotoEdge = vectrigo.PhotoEdgeCrisp    // edge finish; crisp is the default
+cfg.Photo = true                                   // segmentation photo pipeline (best for photos)
+cfg.PhotoDetail = 8                                 // optional σ_r detail dial; 0 keeps the default (12)
+cfg.PhotoSimplify = vectrigo.PhotoSimplifySubtle    // optional node reduction; 0 (default) keeps every node
+cfg.PhotoEdge = vectrigo.PhotoEdgeCrisp             // edge finish; crisp is the default
 ```
 
 - **Off by default.** `Photo` is `false` in both `DefaultConfig()` and the zero
@@ -155,6 +156,19 @@ cfg.PhotoEdge = vectrigo.PhotoEdgeCrisp    // edge finish; crisp is the default
   `~8` punchy (region count climbs, faces can over-segment), `12` balanced
   (default), `28+` soft / abstract (low-contrast shading and small text blend
   away).
+- **`PhotoSimplify` is the node-count / file-size dial** (applies only under
+  `Photo`), and is **opt-in**. Boundary smoothing leaves straight edges as long
+  runs of *nearly* collinear corners, so with simplification off every boundary
+  pixel of a straight edge becomes an output node. `PhotoSimplify` is the maximum
+  perpendicular deviation, in pixels, tolerated when straightening those runs:
+  `0` (the zero value, and `DefaultConfig`'s value; also any value `<= 0` or NaN)
+  means **off** — maximum fidelity, every corner kept. A positive tolerance
+  (clamped to `5.0`) enables it; use the tuned presets
+  `vectrigo.PhotoSimplifySubtle` (`0.35`, visually near-lossless, ~3× fewer
+  nodes) or `vectrigo.PhotoSimplifyAggressive` (`1.0`, smallest files, visibly
+  coarser shapes). Simplification runs **once on the shared boundary graph**, so
+  the two regions flanking any edge always simplify identically and the gapless
+  tiling is preserved at every setting — no seams ever open.
 - **`PhotoEdge` is the anti-aliasing finish** (applies only under `Photo`).
   `PhotoEdgeCrisp` (the zero value, and `DefaultConfig`'s value) disables edge
   anti-aliasing via `shape-rendering="crispEdges"` for the crispest, perfectly
@@ -162,17 +176,20 @@ cfg.PhotoEdge = vectrigo.PhotoEdgeCrisp    // edge finish; crisp is the default
   residual sub-pixel seams with a thin same-colour stroke on each region, for
   slightly softer edges. Any out-of-range value is clamped to crisp.
 
-On the CLI these are `--photo`, `--sigma` and `--edge`:
+On the CLI these are `--photo`, `--sigma`, `--simplify` and `--edge`:
 
 ```sh
-vectrigo-cli -i photo.png --photo                    # => photo.photo.svg (σ_r = 12, crisp)
-vectrigo-cli -i photo.png --photo --sigma 8          # => photo.photo.svg (σ_r = 8)
-vectrigo-cli -i photo.png --photo --edge stroke      # => photo.photo.svg (stroked seams)
+vectrigo-cli -i photo.png --photo                       # => photo.photo.svg (σ_r = 12, crisp, no simplify)
+vectrigo-cli -i photo.png --photo --sigma 8             # => photo.photo.svg (σ_r = 8)
+vectrigo-cli -i photo.png --photo --simplify subtle     # => photo.photo.svg (fewer nodes, near-lossless)
+vectrigo-cli -i photo.png --photo --simplify aggressive # => photo.photo.svg (smallest file, coarser)
+vectrigo-cli -i photo.png --photo --edge stroke         # => photo.photo.svg (stroked seams)
 ```
 
 `--photo` is the third mutually-exclusive mode alongside `--sensitivity` and
-`--auto-k` — exactly one is required. `--sigma` and `--edge` are only valid with
-`--photo` (`--edge` takes `crisp` or `stroke`; unset means crisp), and the output
+`--auto-k` — exactly one is required. `--sigma`, `--simplify` and `--edge` are
+only valid with `--photo` (`--simplify` takes `subtle` or `aggressive`, unset
+means off; `--edge` takes `crisp` or `stroke`, unset means crisp), and the output
 is written next to the input with a `.photo.svg` extension.
 
 ## Architecture: two pipelines
@@ -226,9 +243,10 @@ the default."
 | `MaxDimensions` | `Dimensions{Width, Height}` | `{2048, 2048}` | Downsample ceiling bounding memory use. Inputs larger than this on either axis are high-quality downsampled first. Either axis `<= 0` falls back to the `2048` default for that axis. Applies in both quantization and `Photo` mode. |
 | `Workers` | `int` | `0` (→ `runtime.NumCPU()`) | Tracing concurrency. `<= 0` resolves to `runtime.NumCPU()`; the effective value is further capped to the number of layers being traced. Applies in both quantization and `Photo` mode. |
 | `Precision` | `int` | `2` | Coordinate decimal-place count used when `Optimize` is on. Clamped to `[0, 6]`. Applies in both quantization and `Photo` mode. |
-| `Photo` | `bool` | `false` | Selects the region-first segmentation pipeline (see [Photo mode](#photo-mode-photo-photodetail-photoedge)) instead of the default colour-quantization pipeline. When `true`, `Sensitivity`, `K`, `AutoK`, `AutoKTau`, and `TurdSize` have no effect. When `false`, output is byte-identical to the historical quantization output regardless of `PhotoDetail`/`PhotoEdge`. |
-| `PhotoDetail` | `float64` | `12` (`segment.DefaultRangeSigma`) | Bilateral range-sigma (σ_r), the primary detail-vs-smoothness dial for `Photo` mode (see [Photo mode](#photo-mode-photo-photodetail-photoedge)). `0` (and NaN, and a bare `Config{}`) resolves to the default `12`; clamped to `[4, 60]`. Lower = punchier / more detail (region count climbs); higher = softer / more abstract. No effect when `Photo` is `false`. |
-| `PhotoEdge` | `PhotoEdge` | `PhotoEdgeCrisp` (zero value) | Anti-aliasing finish for `Photo` mode region edges (see [Photo mode](#photo-mode-photo-photodetail-photoedge)): `PhotoEdgeCrisp` (crisp, seam-free, `shape-rendering="crispEdges"`) or `PhotoEdgeStroke` (anti-aliased, seams sealed with a thin same-colour stroke). Any out-of-range value is clamped to `PhotoEdgeCrisp`. No effect when `Photo` is `false`. |
+| `Photo` | `bool` | `false` | Selects the region-first segmentation pipeline (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)) instead of the default colour-quantization pipeline. When `true`, `Sensitivity`, `K`, `AutoK`, `AutoKTau`, and `TurdSize` have no effect. When `false`, output is byte-identical to the historical quantization output regardless of `PhotoDetail`/`PhotoSimplify`/`PhotoEdge`. |
+| `PhotoDetail` | `float64` | `12` (`segment.DefaultRangeSigma`) | Bilateral range-sigma (σ_r), the primary detail-vs-smoothness dial for `Photo` mode (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)). `0` (and NaN, and a bare `Config{}`) resolves to the default `12`; clamped to `[4, 60]`. Lower = punchier / more detail (region count climbs); higher = softer / more abstract. No effect when `Photo` is `false`. |
+| `PhotoSimplify` | `float64` | `0` (off) | **Opt-in** boundary-simplification tolerance (px) for `Photo` mode (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)): the node-count / file-size vs fidelity dial. `0` (the default; and any value `<= 0` or NaN) means **off** — every boundary corner kept, maximum fidelity. A positive tolerance is used as-is, clamped to `5.0`. Tuned presets: `PhotoSimplifySubtle` (`0.35`, near-lossless, ~3× fewer nodes) and `PhotoSimplifyAggressive` (`1.0`, smallest files, coarser). Runs once on the shared boundary graph, so the gapless tiling is preserved at every setting. No effect when `Photo` is `false`. |
+| `PhotoEdge` | `PhotoEdge` | `PhotoEdgeCrisp` (zero value) | Anti-aliasing finish for `Photo` mode region edges (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)): `PhotoEdgeCrisp` (crisp, seam-free, `shape-rendering="crispEdges"`) or `PhotoEdgeStroke` (anti-aliased, seams sealed with a thin same-colour stroke). Any out-of-range value is clamped to `PhotoEdgeCrisp`. No effect when `Photo` is `false`. |
 
 ## License
 

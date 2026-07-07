@@ -30,10 +30,11 @@ extracted into its own repository, or shipped independently without concern.
   - **Gaussian**: a plain separable blur (legacy; smooths edges too).
 - Applies optional deterministic **boundary smoothing** (a label-map mode
   filter) to round off the pixel-staircase jaggies that otherwise distort traced
-  region outlines, with a small-region freeze that protects fine features such
-  as sign lettering.
+  region outlines, with a small-region **and thin-region** freeze that protects
+  fine features such as sign lettering and 1–2px feature lines.
 - Reports the mean colour of each region (`MeanColors`), computed from the
-  original unfiltered image so region colours stay true.
+  original unfiltered image, with R/G/B **averaged in linear light** so mixed
+  highlight/shadow regions keep their true brightness.
 - Handles transparency: pixels with alpha `< 128` take part in no region and are
   labelled `TransparentLabel`, so a region can never bleed across a transparent
   gap.
@@ -82,10 +83,15 @@ identical `Result`. Pixels with alpha `< 128` are excluded and labelled
 ### `func MeanColors(img *image.NRGBA, r Result) []color.RGBA`
 
 Returns the mean opaque colour of each region, indexed by region id: the slice
-has length `r.NumRegions` and element `k` is the average R,G,B,A of the pixels
+has length `r.NumRegions` and element `k` is the average colour of the pixels
 labelled `k`. Colours are computed from `img` (typically the original,
 unsmoothed image), so region colours stay true regardless of any pre-filter.
-Transparent pixels contribute to no region.
+R, G and B are averaged in **linear light** (gamma-decoded, then re-encoded):
+averaging gamma-encoded sRGB bytes systematically darkens a region spanning
+highlight and shadow, so linear averaging is what matches how the eye integrates
+the region's light (a single-colour region is unchanged). Alpha is coverage, not
+light, and keeps its plain arithmetic mean. Transparent pixels contribute to no
+region.
 
 ### `type Result`
 
@@ -109,8 +115,8 @@ adjust — most often `K` (region count) and `RangeSigma` (detail vs smoothness)
 
 | Field            | Type        | Default (via `DefaultOptions`) | Meaning                                                                                                       |
 | ---------------- | ----------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `K`              | `float64`   | `100`                          | Scale/threshold of the FH merge predicate. **The dominant control on region count.**                          |
-| `MinSize`        | `int`       | `4`                            | Minimum region size in pixels after the main merge pass.                                                       |
+| `K`              | `float64`   | `60`                           | Scale/threshold of the FH merge predicate. **The dominant control on region count.**                          |
+| `MinSize`        | `int`       | `6`                            | Minimum region size in pixels after the main merge pass.                                                       |
 | `Sigma`          | `float64`   | `0` (unset)                    | Legacy Gaussian pre-smoothing, honoured **only** when `PreFilter` is unset.                                    |
 | `PreFilter`      | `PreFilter` | `PreFilterBilateral`           | Selects the pre-smoothing filter applied before the edge graph is built.                                       |
 | `SpatialSigma`   | `float64`   | `2`                            | Spatial parameter (σ_s) of the selected pre-filter.                                                            |
@@ -195,22 +201,29 @@ pixel-staircase jaggies (tiny 1-2px protrusions and notches) that otherwise make
 traced region outlines look distorted. Each iteration is a deterministic
 label-map mode (majority) filter: a boundary pixel may flip to the dominant
 neighbouring region label, so convex teeth erode and concave notches fill. A
-**small-region freeze** protects fine features (sign lettering only a few pixels
-across) from being dissolved, and a connected-component relabel keeps the output
-a valid, connected partition. The zero value disables smoothing entirely; a few
-iterations (1-5) suffice. Cost is `O(BoundarySmooth · W · H)`.
+**small-region freeze** (by area) and a **thin-region freeze** (regions whose
+interior pixels are under a quarter of their area — 1–2px letter strokes and
+feature lines, which are big enough to clear the area floor yet still all
+boundary) together protect fine features from being dissolved, and a
+connected-component relabel keeps the output a valid, connected partition. The
+zero value disables smoothing entirely; a few iterations (1-5) suffice. Cost is
+`O(BoundarySmooth · W · H)`.
 
 ### `func DefaultOptions() Options`
 
 Returns the recommended settings for region-first vectorization of a photographic
 image, tuned on a ~1024×559 image: an edge-preserving bilateral pre-filter, fine
 regions, and a few boundary-smoothing iterations. It is the recommended starting
-point.
+point. `K = 60` with `MinSize = 6` (rather than a coarser `K` with a smaller
+`MinSize`) keeps small high-contrast features — an eye, sign lettering — as their
+own regions instead of letting the merge predicate fold them into a large
+textured neighbour, while `MinSize` absorbs the extra speckle so the overall
+region count stays essentially unchanged.
 
 ```go
 Options{
-	K:              100,
-	MinSize:        4,
+	K:              60,
+	MinSize:        6,
 	PreFilter:      PreFilterBilateral,
 	SpatialSigma:   2,
 	RangeSigma:     DefaultRangeSigma, // 12

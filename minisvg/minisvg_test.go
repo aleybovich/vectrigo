@@ -584,3 +584,17 @@ func TestSetBackgroundCoversViewBox(t *testing.T) {
 		t.Fatalf("default background rect changed: %s", sb.String())
 	}
 }
+
+func TestSetShapeRendering(t *testing.T) {
+	var sb strings.Builder
+	New(10, 10).SetShapeRendering("crispEdges").Path("M0 0 L1 1 Z", "#000").render(&sb, WriteOptions{Precision: -1})
+	if !strings.Contains(sb.String(), `viewBox="0 0 10 10" shape-rendering="crispEdges">`) {
+		t.Fatalf("shape-rendering not emitted correctly: %s", sb.String())
+	}
+	// default: no attribute
+	sb.Reset()
+	New(10, 10).Path("M0 0 L1 1 Z", "#000").render(&sb, WriteOptions{Precision: -1})
+	if strings.Contains(sb.String(), "shape-rendering") {
+		t.Fatalf("shape-rendering emitted when unset: %s", sb.String())
+	}
+}

@@ -52,6 +52,8 @@ type Document struct {
 	bgSet  bool
 	bgFill Color
 
+	shapeRendering string
+
 	children []*node
 }
 
@@ -91,6 +93,15 @@ func (d *Document) SetViewBox(minX, minY, w, h float64) *Document {
 func (d *Document) SetBackground(fill Color) *Document {
 	d.bgSet = true
 	d.bgFill = fill
+	return d
+}
+
+// SetShapeRendering sets the root <svg> element's shape-rendering attribute
+// (e.g. "crispEdges" to disable edge anti-aliasing, or "auto"/"geometricPrecision").
+// An empty value (the default) omits the attribute entirely. It returns the
+// Document so calls can be chained.
+func (d *Document) SetShapeRendering(value string) *Document {
+	d.shapeRendering = value
 	return d
 }
 
@@ -278,7 +289,13 @@ func (d *Document) render(sb *strings.Builder, opt WriteOptions) {
 	sb.WriteString(strconv.Itoa(d.height))
 	sb.WriteString("\" viewBox=\"")
 	sb.WriteString(escapeAttr(applyPrecision(d.viewBoxValue(), "viewBox", opt.Precision)))
-	sb.WriteString("\">")
+	sb.WriteString("\"")
+	if d.shapeRendering != "" {
+		sb.WriteString(" shape-rendering=\"")
+		sb.WriteString(escapeAttr(d.shapeRendering))
+		sb.WriteString("\"")
+	}
+	sb.WriteString(">")
 	sb.WriteString(nl)
 
 	if d.bgSet {

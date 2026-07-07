@@ -72,11 +72,14 @@ The following are **FORBIDDEN**:
   CC-BY-4.0. These lack the patent and warranty provisions expected of software
   licenses and are not on the permissive allow-list.
 
-**Why:** Vectrigo targets **commercial / closed-source** use. Copyleft licenses would
-force source disclosure or relicensing of downstream products. Creative Commons
-licenses are inappropriate for redistributable software components. Keeping the whole
-dependency graph permissive means Vectrigo (and its extractable sub-libraries) can be
-sold, embedded, and shipped in proprietary products without legal friction.
+**Why:** Vectrigo is licensed under the **PolyForm Noncommercial License 1.0.0** — free
+for noncommercial use; commercial use requires a separate license from Andrey Leybovich.
+For Vectrigo to be free to set its own license terms this way, the entire dependency
+graph must stay permissive: copyleft licenses would force source disclosure or
+relicensing and would strip Vectrigo of the ability to choose its own terms. Creative
+Commons licenses are inappropriate for redistributable software components. Keeping the
+whole dependency graph permissive means Vectrigo (and its extractable sub-libraries) can
+be licensed and shipped on its own terms without inheriting any copyleft obligation.
 
 **Enforcement:** Add a license-audit step to CI (e.g. `go-licenses` or an equivalent
 pure-Go scanner) that fails the build if any module in the graph resolves to a license
@@ -158,8 +161,9 @@ tempted to pull in one of these, stop: the reason it was rejected is recorded he
 
 These are transpilations/ports of **Potrace** (originally C, licensed **GPL-2.0**).
 Even though the resulting code is pure Go, **the GPL is inherited** through the port.
-Using them would make Vectrigo a GPL derivative work — incompatible with the
-commercial/closed-source target. **FORBIDDEN.**
+Using them would make Vectrigo a GPL derivative work — incompatible with Vectrigo's
+PolyForm Noncommercial licensing, which depends on keeping the dependency graph
+permissive and copyleft-free. **FORBIDDEN.**
 
 > **This is the reason Vectrigo builds its own tracer (`bitrace`) instead of using an
 > off-the-shelf Potrace port.**
@@ -197,7 +201,7 @@ match their intended public module paths).
 ```
 vectrigo/                            # git repository root
 ├── go.work                          # ties the three modules together for dev
-├── LICENSE                          # engine license (choose per business needs)
+├── LICENSE                          # engine license: PolyForm Noncommercial 1.0.0
 ├── README.md                        # top-level project readme (states constraints)
 ├── plan.md                          # this document
 │
@@ -226,7 +230,7 @@ vectrigo/                            # git repository root
 │
 └── bitrace/                         # module github.com/aleybovich/bitrace
     ├── go.mod                       # only dep: honnef.co/go/curve
-    ├── LICENSE                      # MIT
+    ├── LICENSE                      # PolyForm Noncommercial 1.0.0
     ├── README.md
     ├── doc.go
     ├── bitrace.go                   # public API: Trace(mask, cfg) → paths
@@ -266,7 +270,7 @@ tags with **no source changes**.
 ## 6. In-House Library: `minisvg`
 
 **Import path:** `github.com/aleybovich/minisvg`
-**License:** MIT (recommended for the in-house libs)
+**License:** MIT
 **Dependencies:** **none** (Go standard library only).
 
 A minimal, zero-dependency SVG builder/writer. It exists because the obvious
@@ -357,7 +361,7 @@ func (d *Document) WriteToOpts(w io.Writer, opt WriteOptions) (int64, error)
 
 **Import path:** `github.com/aleybovich/bitrace` (name is a placeholder the owner may
 rename).
-**License:** MIT (recommended).
+**License:** PolyForm Noncommercial License 1.0.0 (same as the engine).
 **Dependencies:** only `honnef.co/go/curve` (Apache-2.0). Keep it otherwise
 dependency-light.
 
@@ -802,9 +806,11 @@ commercially licensed independently.
 
 Each of the three modules must ship:
 
-- A `LICENSE` file. **MIT** is recommended for the two in-house libraries (`minisvg`,
-  `bitrace`). The engine module's license is chosen per business needs but must remain
-  compatible with its permissive dependency graph.
+- A `LICENSE` file. `minisvg` is licensed **MIT**. `bitrace` and the engine module
+  (root `github.com/aleybovich/vectrigo`, plus `cmd/vectrigo-cli`) are licensed
+  **PolyForm Noncommercial License 1.0.0** — free for noncommercial use; commercial use
+  requires a separate license from Andrey Leybovich. All of these remain compatible with
+  the permissive dependency graph.
 - A `README.md` covering: what it does, install, a minimal usage example, the license,
   and (for `bitrace`) an explicit clean-room/provenance statement (no Potrace lineage).
 - **Complete godoc:** a package-level doc comment (`doc.go`), godoc on every exported
@@ -846,8 +852,10 @@ Definition of done for each milestone: builds with `CGO_ENABLED=0`, passes `go v
 ## 14. Rationale / Design Decisions
 
 **Why two in-house libraries exist — license cleanliness.**
-The project targets commercial/closed-source use, so every dependency must be
-permissively licensed (§1.2). Two otherwise-obvious dependencies fail that test:
+Vectrigo is licensed under the **PolyForm Noncommercial License 1.0.0** (free for
+noncommercial use; commercial use requires a separate license). For Vectrigo to set its
+own license terms this way, every dependency must be permissively licensed (§1.2) so no
+copyleft is inherited. Two otherwise-obvious dependencies fail that test:
 
 - The mature bitmap tracer everyone reaches for is **Potrace**, and its Go ports
   (`gotranspile/gotrace`, `dennwc/gotrace`) inherit Potrace's **GPL-2.0** — which would

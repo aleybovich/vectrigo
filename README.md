@@ -119,8 +119,9 @@ cfg.AutoK = true // choose K automatically from the image; ignore Sensitivity
   resolution-based maximum and the number of distinct colours present) and by an
   internal auto-selection ceiling (currently 64 colours) that keeps the multi-`K`
   scan fast. The library raises no error if both are set — `AutoK` simply wins for
-  `K`, and `Sensitivity` is ignored for it. (A front-end may still choose to
-  present the two as a mutually exclusive choice.)
+  `K`, and `Sensitivity` is ignored for it. The `vectrigo-cli` tool presents the
+  two as a mutually exclusive choice: `--auto-k <img>` for auto-K, `<img>
+  <sensitivity>` for the manual knob, and it errors if you pass both.
 - **`TurdSize` follows the chosen `K`.** Under `AutoK` the speckle threshold is
   derived from the auto-selected `K` (not from `Sensitivity`), preserving the
   usual "more colours ⇒ less speckle removal" coupling. An explicit `TurdSize`

@@ -198,6 +198,31 @@ vectrigo-cli -i photo.png --photo --edge stroke      # => photo.photo.svg (strok
 `--photo` (`--edge` takes `crisp` or `stroke`; unset means crisp), and the output
 is written next to the input with a `.photo.svg` extension.
 
+## Configuration reference
+
+Every field of `vectrigo.Config`, with its type, default (as set by
+`DefaultConfig()`), and effect. Build from `DefaultConfig()`, not a bare
+`Config{}` — see the [zero-value caveat](#usage) above: a bare `Config{}`
+leaves `Sensitivity` and `Precision` at `0` (not the recommended defaults),
+even though for most *other* fields `0` conveniently means "derive" or "use
+the default."
+
+| Field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `Sensitivity` | `int` | `50` | Primary 0–100 detail dial (see [Usage](#usage)). Drives the derived `(K, TurdSize)` pair when those are left `0`. Clamped to `[0, 100]`. `0` is a legitimate value (maximum posterization) — it is *not* a sentinel for "unset." No effect when `Photo` is `true`. |
+| `AutoK` | `bool` | `false` | Selects `K` automatically from the image's colour complexity instead of deriving it from `Sensitivity` (see [Automatic colour count (`AutoK`)](#automatic-colour-count-autok)). When `true`, `Sensitivity` has no effect on `K`. Superseded by an explicit `K > 0`. No effect when `Photo` is `true`. |
+| `AutoKTau` | `float64` | `0.02` | Residual-distortion "knee" threshold used by `AutoK` (see [Automatic colour count (`AutoK`)](#automatic-colour-count-autok)). Smaller ⇒ more colours / higher fidelity; larger ⇒ fewer colours. Zero value (and NaN, and a bare `Config{}`) resolves to the default `0.02`; clamped to a maximum of `0.5`. Only applies when `AutoK` is `true` and no explicit `K` override is set; otherwise inert. |
+| `K` | `int` | `0` | Forces an exact cluster (colour) count, overriding both `Sensitivity`- and `AutoK`-derived values. `0` means derive. When `> 0` it is a hard override, clamped to `[2, maxKForPixels(W×H)]`, and never exceeds the image's distinct-colour count. Wins over `AutoK` as well as over `Sensitivity`. No effect when `Photo` is `true`. |
+| `TurdSize` | `int` | `0` | Forces the speckle-area removal threshold in pixels (passed to `bitrace`). `0` means derive (from `Sensitivity`, or from the auto-selected `K` under `AutoK`); a **negative** value force-disables speckle removal entirely; a **positive** value is used as-is. No effect when `Photo` is `true`. |
+| `AlphaMax` | `float64` | `1.0` | Corner/smoothness axis, independent of detail. Passed to `bitrace`, which clamps it to `[0, 1.334]`. Lower is more angular; higher is smoother. Applies in both quantization and `Photo` mode. |
+| `Optimize` | `bool` | `true` | Enables `bitrace`'s looser curve fitting and `minisvg`'s minify + coordinate-rounding pass. Applies in both quantization and `Photo` mode. |
+| `MaxDimensions` | `Dimensions{Width, Height}` | `{2048, 2048}` | Downsample ceiling bounding memory use. Inputs larger than this on either axis are high-quality downsampled first. Either axis `<= 0` falls back to the `2048` default for that axis. Applies in both quantization and `Photo` mode. |
+| `Workers` | `int` | `0` (→ `runtime.NumCPU()`) | Tracing concurrency. `<= 0` resolves to `runtime.NumCPU()`; the effective value is further capped to the number of layers being traced. Applies in both quantization and `Photo` mode. |
+| `Precision` | `int` | `2` | Coordinate decimal-place count used when `Optimize` is on. Clamped to `[0, 6]`. Applies in both quantization and `Photo` mode. |
+| `Photo` | `bool` | `false` | Selects the region-first segmentation pipeline (see [Photo mode](#photo-mode-photo-photodetail-photoedge)) instead of the default colour-quantization pipeline. When `true`, `Sensitivity`, `K`, `AutoK`, `AutoKTau`, and `TurdSize` have no effect. When `false`, output is byte-identical to the historical quantization output regardless of `PhotoDetail`/`PhotoEdge`. |
+| `PhotoDetail` | `float64` | `12` (`segment.DefaultRangeSigma`) | Bilateral range-sigma (σ_r), the primary detail-vs-smoothness dial for `Photo` mode (see [Photo mode](#photo-mode-photo-photodetail-photoedge)). `0` (and NaN, and a bare `Config{}`) resolves to the default `12`; clamped to `[4, 60]`. Lower = punchier / more detail (region count climbs); higher = softer / more abstract. No effect when `Photo` is `false`. |
+| `PhotoEdge` | `PhotoEdge` | `PhotoEdgeCrisp` (zero value) | Anti-aliasing finish for `Photo` mode region edges (see [Photo mode](#photo-mode-photo-photodetail-photoedge)): `PhotoEdgeCrisp` (crisp, seam-free, `shape-rendering="crispEdges"`) or `PhotoEdgeStroke` (anti-aliased, seams sealed with a thin same-colour stroke). Any out-of-range value is clamped to `PhotoEdgeCrisp`. No effect when `Photo` is `false`. |
+
 ## License
 
 Vectrigo — the engine and the `vectrigo-cli` command — is licensed under the

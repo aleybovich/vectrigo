@@ -30,3 +30,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Compiled command binaries (e.g. bin/vectrigo-cli built via go build -o bin/)
+/bin/

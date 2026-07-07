@@ -1,5 +1,5 @@
 // Command segdemo exercises the github.com/aleybovich/segment
-// Felzenszwalb–Huttenlocher segmentation library end-to-end on a real image and
+// Felzenszwalb-Huttenlocher segmentation library end-to-end on a real image and
 // renders the result to SVG, so the segmentation front-end can be evaluated
 // visually against the existing colour-quantization path.
 //

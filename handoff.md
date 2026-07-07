@@ -15,7 +15,7 @@ Three Go modules in one repo, all pure-Go / `CGO_ENABLED=0`, permissive dep grap
 - Test fixtures in `testdata/`: `street_market.png` (1024×559 real image), `shapes.{png,jpg,webp}` (96×64, owned, one per decoder).
 
 ## Baseline: how Sensitivity → K works today (committed)
-`Config.Sensitivity` (int **0–100**, the primary knob) derives K and TurdSize in `config.go resolveDetail(W,H)`:
+`Config.Sensitivity` (int **0-100**, the primary knob) derives K and TurdSize in `config.go resolveDetail(W,H)`:
 - `K = round(4·2^(S/25))` → 4, 8, 16, 32, **64** at S = 0, 25, 50, 75, 100. (So S=100 targets K=64, never 100.)
 - `TurdSize = floor(8·2^(−S/25))` → 8, 4, 2, 1, 0.
 - K then clamped to `[2, maxKForPixels(W·H)]`, `maxKForPixels = clamp(px/1024, 2, 256)`, and effective layers are also capped by **distinct colors present** (`TestQuantizeKClampToDistinctColors`).

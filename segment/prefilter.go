@@ -6,7 +6,7 @@ import (
 )
 
 // PreFilter selects the optional pre-smoothing applied to the working image
-// before the Felzenszwalb–Huttenlocher edge graph is built. The filter affects
+// before the Felzenszwalb-Huttenlocher edge graph is built. The filter affects
 // only the edge weights that drive segmentation; region colours reported by
 // MeanColors are always taken from the original, unfiltered image.
 type PreFilter int
@@ -110,10 +110,10 @@ func clampRound(v float64) uint8 {
 //     and stronger blur within regions. The window half-width is bounded to
 //     ⌈2.5·σ_s⌉ pixels (beyond which the spatial weight is negligible) to keep
 //     cost bounded.
-//   - σ_r (rangeSigma) sets how large a colour difference (in 0–255 RGB
+//   - σ_r (rangeSigma) sets how large a colour difference (in 0-255 RGB
 //     Euclidean terms) still gets blended: smaller σ_r preserves more edges
 //     (only near-identical colours mix); larger σ_r behaves more like a plain
-//     Gaussian. A σ_r of roughly 20–40 preserves typical photographic edges
+//     Gaussian. A σ_r of roughly 20-40 preserves typical photographic edges
 //     while smoothing shading.
 //
 // A full 2D bounded window is used (not a separable two-pass approximation):

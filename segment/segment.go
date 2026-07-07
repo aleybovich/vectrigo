@@ -119,7 +119,7 @@ type Options struct {
 	// It is the primary "detail vs smoothness" dial for photo vectorization.
 	// The reasonable range is roughly [8, 40]; DefaultRangeSigma (12) is the
 	// balanced recommendation:
-	//   - ~28–40: soft, abstract output — low-contrast facial shading and small
+	//   - ~28-40: soft, abstract output — low-contrast facial shading and small
 	//     text get blended away.
 	//   - ~12 (default): preserves facial contrast and small-sign lettering
 	//     while still denoising smooth gradients into clean regions.
@@ -132,7 +132,7 @@ type Options struct {
 
 	// BoundarySmooth is the number of boundary-smoothing iterations applied to
 	// the region label map AFTER region formation and the MinSize merge, to
-	// round off the pixel-staircase jaggies (tiny 1–2px protrusions and notches)
+	// round off the pixel-staircase jaggies (tiny 1-2px protrusions and notches)
 	// that otherwise make traced region outlines look distorted. Each iteration
 	// is a deterministic label-map mode (majority) filter: a boundary pixel may
 	// flip to the dominant neighbouring region label, so convex teeth erode and
@@ -142,7 +142,7 @@ type Options struct {
 	//
 	// The zero value (the default) disables smoothing entirely, so Options with
 	// BoundarySmooth unset produce byte-for-byte the same Labels as before this
-	// field existed. A few iterations (1–5) suffice; cost is O(BoundarySmooth ·
+	// field existed. A few iterations (1-5) suffice; cost is O(BoundarySmooth ·
 	// W · H).
 	BoundarySmooth int
 }
@@ -195,7 +195,7 @@ type edge struct {
 }
 
 // Segment partitions img's opaque pixels into spatially connected regions of
-// similar colour using Felzenszwalb–Huttenlocher graph segmentation.
+// similar colour using Felzenszwalb-Huttenlocher graph segmentation.
 //
 // It is deterministic: identical (img, opt) inputs always produce identical
 // Labels. Pixels with alpha < 128 are excluded and labelled TransparentLabel.

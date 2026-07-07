@@ -176,7 +176,7 @@ preserve more edges, larger values blend across bigger colour differences. Only
 photo vectorization. The reasonable range is roughly `[8, 40]`;
 `DefaultRangeSigma` (`12`) is the balanced recommendation:
 
-- **~28–40 (soft):** abstract output — low-contrast facial shading and small
+- **~28-40 (soft):** abstract output — low-contrast facial shading and small
   text get blended away.
 - **~12 (default, balanced):** preserves facial contrast and small-sign
   lettering while still denoising smooth gradients into clean regions.
@@ -191,14 +191,14 @@ Values `<= 0` make the bilateral filter a no-op (identity).
 
 The number of boundary-smoothing iterations applied to the region label map
 **after** region formation and the `MinSize` merge, to round off the
-pixel-staircase jaggies (tiny 1–2px protrusions and notches) that otherwise make
+pixel-staircase jaggies (tiny 1-2px protrusions and notches) that otherwise make
 traced region outlines look distorted. Each iteration is a deterministic
 label-map mode (majority) filter: a boundary pixel may flip to the dominant
 neighbouring region label, so convex teeth erode and concave notches fill. A
 **small-region freeze** protects fine features (sign lettering only a few pixels
 across) from being dissolved, and a connected-component relabel keeps the output
 a valid, connected partition. The zero value disables smoothing entirely; a few
-iterations (1–5) suffice. Cost is `O(BoundarySmooth · W · H)`.
+iterations (1-5) suffice. Cost is `O(BoundarySmooth · W · H)`.
 
 ### `func DefaultOptions() Options`
 

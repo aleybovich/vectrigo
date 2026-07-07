@@ -37,7 +37,7 @@ none, is an error). On success the output path is printed to stdout.
 Vectrigo has two pipelines; the mode flags select between them:
 
 - **Quantization** (colour-first, best for **flat / logo / icon art**):
-  - `--sensitivity`/`-s <0–100>` — fixed detail knob (higher = more colours / detail).
+  - `--sensitivity`/`-s <0-100>` — fixed detail knob (higher = more colours / detail).
   - `--auto-k` — let the engine pick the colour count automatically (no sensitivity).
 - **Segmentation** (region-first, best for **photographic / painterly images**):
   - `--photo` — enable the segmentation pipeline.

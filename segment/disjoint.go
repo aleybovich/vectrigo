@@ -1,7 +1,7 @@
 package segment
 
 // disjoint is a union-find (disjoint-set) forest specialised for
-// Felzenszwalb–Huttenlocher segmentation. In addition to the usual
+// Felzenszwalb-Huttenlocher segmentation. In addition to the usual
 // parent/size bookkeeping it tracks, per component, the internal difference
 // (intDiff): the weight of the largest edge on the component's minimum
 // spanning tree. Because FH processes edges in non-decreasing weight order,

@@ -2,7 +2,7 @@
 
 **Module:** `github.com/aleybovich/vectrigo` (repo root)
 **Status:** Design (implementation-ready). This document is the authoritative
-build spec for the engine. It refines `plan.md` §§1, 5, 8–11 with the *exact*
+build spec for the engine. It refines `plan.md` §§1, 5, 8-11 with the *exact*
 APIs of the two in-house libraries (`bitrace`, `minisvg`) and the approved
 third-party dependencies as they actually exist in this tree.
 
@@ -154,7 +154,7 @@ type Dimensions struct {
 }
 
 type Config struct {
-    // Sensitivity is the PRIMARY 0–100 detail dial (integer percent). Drives the
+    // Sensitivity is the PRIMARY 0-100 detail dial (integer percent). Drives the
     // derived (K, TurdSize) pair. 0 is a real value (max posterization), so a
     // bare Config{} means Sensitivity 0, NOT the default — build from
     // DefaultConfig(). Clamped to [0,100].

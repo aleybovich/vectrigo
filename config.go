@@ -56,7 +56,7 @@ const (
 // means Sensitivity 0 (maximum posterization), NOT the recommended defaults —
 // Sensitivity's zero is a legitimate setting and so cannot double as "unset".
 type Config struct {
-	// Sensitivity is the primary 0–100 detail dial (integer percent). It drives
+	// Sensitivity is the primary 0-100 detail dial (integer percent). It drives
 	// the derived (K, TurdSize) pair: higher Sensitivity raises the colour
 	// count K while easing TurdSize down. Clamped to [0,100].
 	//

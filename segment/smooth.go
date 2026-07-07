@@ -30,7 +30,7 @@ package segment
 // (has no interior pixel — e.g. a 1px-wide stroke longer than the floor) can
 // still erode under many iterations. Two-pixel-wide strokes are preserved
 // naturally (their pixels keep a same-label majority), and the recommended
-// iteration count is small (1–5), so this is not a concern in practice.
+// iteration count is small (1-5), so this is not a concern in practice.
 
 // defaultSmoothProtect is the minimum region-area floor honoured by boundary
 // smoothing even when Options.MinSize is unset. Any region whose area is at or

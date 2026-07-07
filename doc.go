@@ -26,7 +26,7 @@
 // # Usage
 //
 // Build a [Config] from [DefaultConfig] and adjust the primary knob,
-// [Config.Sensitivity] (0–100):
+// [Config.Sensitivity] (0-100):
 //
 //	cfg := vectrigo.DefaultConfig()
 //	cfg.Sensitivity = 70 // more detail

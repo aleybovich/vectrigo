@@ -35,7 +35,7 @@ func Example() {
 	var out bytes.Buffer
 
 	cfg := vectrigo.DefaultConfig()
-	cfg.Sensitivity = 70 // the primary knob: more detail (0–100)
+	cfg.Sensitivity = 70 // the primary knob: more detail (0-100)
 
 	if err := vectrigo.Vectorize(in, &out, cfg); err != nil {
 		fmt.Println("error:", err)

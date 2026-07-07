@@ -76,7 +76,7 @@ func main() {
 	defer out.Close()
 
 	cfg := vectrigo.DefaultConfig()
-	cfg.Sensitivity = 70 // primary detail knob, 0–100
+	cfg.Sensitivity = 70 // primary detail knob, 0-100
 
 	if err := vectrigo.Vectorize(in, out, cfg); err != nil {
 		panic(err)
@@ -96,7 +96,7 @@ err := eng.Convert(reader, writer)
 Start from `DefaultConfig()` and adjust from there. A bare `Config{}` means
 `Sensitivity` 0 (maximum posterization), **not** the recommended defaults —
 `Sensitivity`'s zero is a legitimate setting, so it cannot double as "unset".
-`Sensitivity` (0–100) is the primary knob; `AutoK`, `K`, `TurdSize`, `AlphaMax`,
+`Sensitivity` (0-100) is the primary knob; `AutoK`, `K`, `TurdSize`, `AlphaMax`,
 `Optimize`, `MaxDimensions`, `Workers`, and `Precision` are advanced overrides.
 
 ### Automatic colour count (`AutoK`)
@@ -239,7 +239,7 @@ the default."
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `Sensitivity` | `int` | `50` | Primary 0–100 detail dial (see [Usage](#usage)). Drives the derived `(K, TurdSize)` pair when those are left `0`. Clamped to `[0, 100]`. `0` is a legitimate value (maximum posterization) — it is *not* a sentinel for "unset." No effect when `Photo` is `true`. |
+| `Sensitivity` | `int` | `50` | Primary 0-100 detail dial (see [Usage](#usage)). Drives the derived `(K, TurdSize)` pair when those are left `0`. Clamped to `[0, 100]`. `0` is a legitimate value (maximum posterization) — it is *not* a sentinel for "unset." No effect when `Photo` is `true`. |
 | `AutoK` | `bool` | `false` | Selects `K` automatically from the image's colour complexity instead of deriving it from `Sensitivity` (see [Automatic colour count (`AutoK`)](#automatic-colour-count-autok)). When `true`, `Sensitivity` has no effect on `K`. Superseded by an explicit `K > 0`. No effect when `Photo` is `true`. |
 | `AutoKTau` | `float64` | `0.02` | Residual-distortion "knee" threshold used by `AutoK` (see [Automatic colour count (`AutoK`)](#automatic-colour-count-autok)). Smaller ⇒ more colours / higher fidelity; larger ⇒ fewer colours. Zero value (and NaN, and a bare `Config{}`) resolves to the default `0.02`; clamped to a maximum of `0.5`. Only applies when `AutoK` is `true` and no explicit `K` override is set; otherwise inert. |
 | `K` | `int` | `0` | Forces an exact cluster (colour) count, overriding both `Sensitivity`- and `AutoK`-derived values. `0` means derive. When `> 0` it is a hard override, clamped to `[2, maxKForPixels(W×H)]`, and never exceeds the image's distinct-colour count. Wins over `AutoK` as well as over `Sensitivity`. No effect when `Photo` is `true`. |

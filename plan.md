@@ -425,7 +425,7 @@ Implement these five steps. All are standard, general, public-domain techniques 
 1. **Contour extraction.**
    Trace the boundaries of the "on" regions of the binary mask into ordered point
    polylines. Use a standard public-domain algorithm — **Moore-neighbor tracing /
-   Suzuki–Abe border following**, or **marching squares**. Must handle **outer
+   Suzuki-Abe border following**, or **marching squares**. Must handle **outer
    boundaries and holes** (inner contours), producing correctly-wound closed
    polylines (e.g. outer contours counter-clockwise, holes clockwise, or a documented
    convention with `IsHole` set).
@@ -573,14 +573,14 @@ type Dimensions struct {
 
 type Config struct {
 	// Sensitivity is the PRIMARY, high-level detail dial and the one knob most
-	// callers ever touch. It is an integer PERCENTAGE, 0–100. Default: 50.
+	// callers ever touch. It is an integer PERCENTAGE, 0-100. Default: 50.
 	//
 	//   - Raise it when meaningful detail disappeared (image looks too flat/merged).
 	//   - Lower it when the output shows "strange artifacts" (banding, noise shards).
 	//
-	// Whole-number percent (not a 0.0–1.0 float, not decimals): it is unambiguous to
+	// Whole-number percent (not a 0.0-1.0 float, not decimals): it is unambiguous to
 	// read/set, and finer precision would be false — Sensitivity maps down to an
-	// integer color count K, which has fewer distinct steps than 0–100 already gives.
+	// integer color count K, which has fewer distinct steps than 0-100 already gives.
 	//
 	// NOTE ON THE ZERO VALUE: 0 is a real setting (0% = maximum posterization), so it
 	// cannot double as "unset." Start from DefaultConfig() rather than a bare
@@ -640,7 +640,7 @@ type Config struct {
 // Sensitivity unless the caller overrides them.
 func DefaultConfig() Config {
 	return Config{
-		Sensitivity:   50, // 0–100 percent
+		Sensitivity:   50, // 0-100 percent
 		K:             0, // 0 => derived from Sensitivity
 		TurdSize:      0, // 0 => derived from Sensitivity
 		AlphaMax:      1.0,
@@ -681,7 +681,7 @@ deliberately trading cleanliness for maximum detail.
 | `Optimize` | Simplification + coordinate rounding. | true | — |
 | `MaxDimensions` | Downsample ceiling (memory bound). | 2048×2048 | Min 1×1. Values ≤ 0 mean "use default". |
 | `Workers` | Tracing concurrency. | `NumCPU()` | ≤ 0 → default. Never spawn more workers than layers `N`. |
-| `Precision` | Coordinate decimal places when `Optimize`. | 2 | 0–6 typical. |
+| `Precision` | Coordinate decimal places when `Optimize`. | 2 | 0-6 typical. |
 
 A `Config.normalize()`/`validate()` helper should fill defaults for zero-valued fields
 and apply the clamps above before the pipeline runs. Most zero fields default cleanly
@@ -732,7 +732,7 @@ Usage:
 
 ```go
 cfg := vectrigo.DefaultConfig()
-cfg.Sensitivity = 70 // the primary knob: more detail (0–100)
+cfg.Sensitivity = 70 // the primary knob: more detail (0-100)
 if err := vectrigo.Vectorize(inputReader, outputWriter, cfg); err != nil {
 	log.Fatal(err)
 }
@@ -839,13 +839,13 @@ Build the leaf dependencies first so each layer can be tested in isolation.
    quantization → Stage III worker-pool tracing → Stage IV SVG assembly. End-to-end
    tests on sample PNG/JPEG/WEBP images. Public API (`Vectorize`, `Engine`).
 4. **Tuning pass.** Calibrate the `Sensitivity → (K, TurdSize)` mapping curve (§9) on a
-   representative image set so the 0–100 dial feels linear and mid-range output stays
+   representative image set so the 0-100 dial feels linear and mid-range output stays
    clean; dial in defaults for `AlphaMax`; validate the minification output; verify
    memory bounds (downsample ceiling + `K` clamp) on large inputs; profile allocations
    in k-means and tracing.
 
 Definition of done for each milestone: builds with `CGO_ENABLED=0`, passes `go vet` and
-`go test ./...`, ships godoc + examples, and (for modules 1–2) is extraction-ready.
+`go test ./...`, ships godoc + examples, and (for modules 1-2) is extraction-ready.
 
 ---
 

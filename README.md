@@ -20,7 +20,7 @@ images (**PNG / JPEG / WEBP**) into clean, scalable **SVG vector paths**.
 go get github.com/aleybovich/vectrigo
 ```
 
-No C compiler or external libraries required — a plain `go build` is all you need:
+Build with cgo disabled to enforce the pure-Go constraint:
 
 ```sh
 CGO_ENABLED=0 go build ./...

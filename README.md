@@ -96,8 +96,44 @@ err := eng.Convert(reader, writer)
 Start from `DefaultConfig()` and adjust from there. A bare `Config{}` means
 `Sensitivity` 0 (maximum posterization), **not** the recommended defaults —
 `Sensitivity`'s zero is a legitimate setting, so it cannot double as "unset".
-`Sensitivity` (0–100) is the primary knob; `K`, `TurdSize`, `AlphaMax`,
+`Sensitivity` (0–100) is the primary knob; `AutoK`, `K`, `TurdSize`, `AlphaMax`,
 `Optimize`, `MaxDimensions`, `Workers`, and `Precision` are advanced overrides.
+
+### Automatic colour count (`AutoK`)
+
+By default the colour count `K` is derived from `Sensitivity`. As an alternative,
+`AutoK` lets Vectrigo pick `K` **automatically** from the image's own colour
+complexity — a flat, few-colour logo collapses to a small `K`, while a rich,
+gradient-heavy photo gets a larger one.
+
+```go
+cfg := vectrigo.DefaultConfig()
+cfg.AutoK = true // choose K automatically from the image; ignore Sensitivity
+```
+
+- **Off by default.** `AutoK` is `false` in both `DefaultConfig()` and the zero
+  `Config{}`; leaving it off preserves today's exact behaviour.
+- **Supersedes `Sensitivity`.** Set a `Sensitivity` or turn on `AutoK` — the two
+  are meant as an either/or. When `AutoK` is on, **`Sensitivity` has no effect on
+  `K`**: it is not even a ceiling. `K` is bounded by the usual safety clamps (a
+  resolution-based maximum and the number of distinct colours present) and by an
+  internal auto-selection ceiling (currently 64 colours) that keeps the multi-`K`
+  scan fast. The library raises no error if both are set — `AutoK` simply wins for
+  `K`, and `Sensitivity` is ignored for it. (A front-end may still choose to
+  present the two as a mutually exclusive choice.)
+- **`TurdSize` follows the chosen `K`.** Under `AutoK` the speckle threshold is
+  derived from the auto-selected `K` (not from `Sensitivity`), preserving the
+  usual "more colours ⇒ less speckle removal" coupling. An explicit `TurdSize`
+  override still applies.
+- **Explicit `K` still wins.** Setting `cfg.K > 0` is a hard override that beats
+  `AutoK` (and `Sensitivity`).
+- **Deterministic.** Auto-K uses the same seeded k-means as the rest of the
+  pipeline, so a given image always yields the same `K` and byte-identical SVG.
+
+How it works: Vectrigo measures the k-means distortion (within-cluster
+sum-of-squares) for increasing `K` and stops at the "knee" — the smallest `K`
+that already explains the bulk of the image's colour variation, so extra colours
+would add detail with diminishing returns.
 
 ## License
 

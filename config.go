@@ -26,16 +26,45 @@ type Config struct {
 	// Sensitivity 0, not the default — start from DefaultConfig().
 	Sensitivity int
 
+	// AutoK selects the cluster count K automatically from the image's colour
+	// complexity instead of deriving it from Sensitivity. Default false.
+	//
+	// When true, K is chosen by [github.com/aleybovich/vectrigo] via a k-means
+	// distortion "knee" (see quantize.SelectK): a flat, few-colour image yields
+	// a small K and a complex/gradient image a larger one. It is bounded by the
+	// existing safety clamps — maxKForPixels(W*H) and the image's distinct-colour
+	// count — and by an internal auto-selection ceiling (currently 64 colours)
+	// that keeps the multi-K distortion scan fast; it is NOT bounded by
+	// Sensitivity. Under AutoK, Sensitivity has NO effect on K whatsoever; it is
+	// not a ceiling. TurdSize likewise stops tracking Sensitivity and is derived
+	// from the chosen K (see [Config.TurdSize]).
+	//
+	// Precedence: an explicit K (> 0) is a hard override and wins over AutoK.
+	// Otherwise AutoK, when set, wins over Sensitivity for choosing K — the
+	// library raises NO error if both AutoK and a Sensitivity are set; the
+	// Sensitivity is simply ignored for K. (A front-end may still choose to
+	// expose AutoK and Sensitivity as a mutually exclusive choice.)
+	AutoK bool
+
 	// K forces an exact cluster count, overriding the value derived from
 	// Sensitivity. 0 means derive. When set it is clamped to
 	// [2, maxKForPixels(W*H)] and never exceeds the image's distinct-colour
 	// count.
+	//
+	// An explicit K (> 0) is a hard override: it wins over [Config.AutoK] as
+	// well as over Sensitivity.
 	K int
 
 	// TurdSize forces the speckle-area threshold in pixels, passed to bitrace.
-	// 0 means derive from Sensitivity; a negative value force-disables speckle
-	// removal (passes 0 to bitrace); a positive value is used as-is. (The sign
-	// convention resolves the "0 = derive" vs "0 = disable" ambiguity.)
+	// 0 means derive; a negative value force-disables speckle removal (passes 0
+	// to bitrace); a positive value is used as-is. (The sign convention resolves
+	// the "0 = derive" vs "0 = disable" ambiguity.)
+	//
+	// When derived (0): with Sensitivity-driven K it follows the Sensitivity
+	// curve; under [Config.AutoK] it is derived from the auto-chosen K instead
+	// (floor(32/K), the same inverse K-noise coupling re-expressed through K), so
+	// it never depends on Sensitivity. An explicit override behaves identically
+	// in both modes.
 	TurdSize int
 
 	// AlphaMax is the corner/smoothness axis, independent of detail. Passed to
@@ -67,6 +96,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Sensitivity:   50,
+		AutoK:         false,
 		K:             0,
 		TurdSize:      0,
 		AlphaMax:      1.0,
@@ -135,6 +165,26 @@ func (c Config) resolveDetail(W, H int) (k, turd int) {
 		}
 	}
 	return k, turd
+}
+
+// turdForK returns the effective TurdSize for a given cluster count K, honouring
+// an explicit [Config.TurdSize] override and otherwise deriving the speckle
+// threshold from K alone (independent of Sensitivity). The derived value,
+// floor(32/K), is the Sensitivity curve's K-to-noise coupling re-expressed
+// through K: at K = 4, 8, 16, 32, 64 it yields 8, 4, 2, 1, 0 — matching the
+// Sensitivity path exactly. Used for the [Config.AutoK] detail resolution.
+func (c Config) turdForK(k int) int {
+	switch {
+	case c.TurdSize < 0:
+		return 0
+	case c.TurdSize > 0:
+		return c.TurdSize
+	default:
+		if k < 1 {
+			return 0
+		}
+		return 32 / k
+	}
 }
 
 // maxKForPixels bounds K relative to resolution so clusters are not

@@ -48,7 +48,17 @@ func (e *Engine) Convert(r io.Reader, w io.Writer) error {
 	}
 
 	b := img.NRGBA.Bounds()
-	k, turd := e.cfg.resolveDetail(b.Dx(), b.Dy())
+	var k, turd int
+	if e.cfg.AutoK && e.cfg.K <= 0 {
+		// Auto-K: choose K from the image's colour complexity, ignoring
+		// Sensitivity. An explicit K (> 0) is a hard override and takes the
+		// resolveDetail path below instead. TurdSize is derived from the chosen
+		// K (or an explicit override), never from Sensitivity.
+		k = quantize.SelectK(img, maxKForPixels(b.Dx()*b.Dy()))
+		turd = e.cfg.turdForK(k)
+	} else {
+		k, turd = e.cfg.resolveDetail(b.Dx(), b.Dy())
+	}
 
 	layers, err := quantize.Quantize(img, k)
 	if err != nil {

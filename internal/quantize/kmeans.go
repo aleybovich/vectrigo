@@ -30,14 +30,7 @@ func (kmeansLloyd) fit(pix []uint8, w, h, k int) ([][3]float64, []int, error) {
 
 	// Collect opaque pixel indices (alpha >= 128). Transparent pixels get
 	// label -1 and take part in no cluster.
-	opaque := make([]int, 0, n)
-	for i := 0; i < n; i++ {
-		if pix[i*4+3] >= 128 {
-			opaque = append(opaque, i)
-		} else {
-			labels[i] = -1
-		}
-	}
+	opaque := collectOpaque(pix, n, labels)
 	if len(opaque) == 0 {
 		return nil, labels, nil
 	}
@@ -46,20 +39,64 @@ func (kmeansLloyd) fit(pix []uint8, w, h, k int) ([][3]float64, []int, error) {
 	}
 
 	// Deterministic stride sample for the fit step.
-	sample := opaque
-	if len(opaque) > maxFitSamples {
-		stride := len(opaque)/maxFitSamples + 1
-		sample = make([]int, 0, len(opaque)/stride+1)
-		for i := 0; i < len(opaque); i += stride {
-			sample = append(sample, opaque[i])
+	sample := strideSample(opaque, maxFitSamples)
+
+	centroids, _ := fitCentroids(pix, sample, k)
+
+	// Final assignment: every opaque pixel to its nearest fitted centroid.
+	for _, idx := range opaque {
+		labels[idx] = nearest(centroids, rgbAt(pix, idx))
+	}
+	return centroids, labels, nil
+}
+
+// collectOpaque returns the flat indices of opaque pixels (alpha >= 128). Every
+// transparent pixel's slot in labels (which must have length n) is set to -1 so
+// it participates in no cluster. It is shared by the production quantization
+// path and by auto-K selection.
+func collectOpaque(pix []uint8, n int, labels []int) []int {
+	opaque := make([]int, 0, n)
+	for i := 0; i < n; i++ {
+		if pix[i*4+3] >= 128 {
+			opaque = append(opaque, i)
+		} else {
+			labels[i] = -1
 		}
 	}
+	return opaque
+}
 
+// strideSample returns the deterministic stride subsample of opaque used to fit
+// centroids, capping the fit cost at limit pixels. When len(opaque) <= limit the
+// original slice is returned unchanged. The stride is fixed (not RNG-driven) so
+// output stays byte-reproducible.
+func strideSample(opaque []int, limit int) []int {
+	if len(opaque) <= limit {
+		return opaque
+	}
+	stride := len(opaque)/limit + 1
+	sample := make([]int, 0, len(opaque)/stride+1)
+	for i := 0; i < len(opaque); i += stride {
+		sample = append(sample, opaque[i])
+	}
+	return sample
+}
+
+// fitCentroids runs seeded k-means++ initialization followed by Lloyd iteration
+// over sample (a slice of opaque pixel indices) and returns the fitted centroids
+// together with the sample's final labels. The RNG is freshly seeded from
+// kmeansSeed on every call, so the result depends only on (pix, sample, k) and
+// is fully deterministic and independent of call order.
+//
+// This is the shared clustering core used both by fit (the production
+// quantization path — where it must reproduce the historical byte-identical
+// output) and by SelectK (auto-K distortion evaluation). Do not alter its RNG
+// draw sequence without re-baselining the golden output.
+func fitCentroids(pix []uint8, sample []int, k int) (centroids [][3]float64, sampLabels []int) {
 	rng := rand.New(rand.NewSource(kmeansSeed))
-	centroids := kmeansPlusPlus(pix, sample, k, rng)
+	centroids = kmeansPlusPlus(pix, sample, k, rng)
 
-	// Lloyd iteration over the sample.
-	sampLabels := make([]int, len(sample))
+	sampLabels = make([]int, len(sample))
 	for i := range sampLabels {
 		sampLabels[i] = -1
 	}
@@ -101,12 +138,7 @@ func (kmeansLloyd) fit(pix []uint8, w, h, k int) ([][3]float64, []int, error) {
 			break
 		}
 	}
-
-	// Final assignment: every opaque pixel to its nearest fitted centroid.
-	for _, idx := range opaque {
-		labels[idx] = nearest(centroids, rgbAt(pix, idx))
-	}
-	return centroids, labels, nil
+	return centroids, sampLabels
 }
 
 // kmeansPlusPlus chooses k initial centroids from sample using the k-means++

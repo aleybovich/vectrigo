@@ -20,16 +20,6 @@ import (
 // keeping the exact shared-boundary tiling that makes photo mode seam-free.
 const photoBoundarySmooth = 3
 
-// photoBoundarySimplify is the shared-boundary simplification tolerance (max
-// perpendicular deviation, in working-image pixels) applied to region-boundary
-// chains in photo mode when [Config.Optimize] is on (see
-// [regiontrace.Options.Simplify]). Smoothing leaves straight edges as long
-// runs of NEARLY collinear corners, so without this every boundary pixel of a
-// straight edge becomes an output node. The drop decisions are made once on
-// the shared corner graph, so neighbouring regions stay exactly tight — no
-// seams open. ~1/3 px is visually lossless at crispEdges rendering while
-// collapsing straight runs to their endpoints.
-const photoBoundarySimplify = 0.35
 
 // Vectorize reads a raster image (PNG/JPEG/WEBP) from r, converts it to SVG
 // using cfg, and writes the SVG document to w. It is stateless and safe for
@@ -127,11 +117,17 @@ func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
 
 	// Trace the whole label map as one planar subdivision: adjacent regions share
 	// exact boundary geometry, so filled regions tile the plane gapless — no
-	// background is needed. Simplification is lossy (sub-pixel), so it rides the
-	// Optimize switch like coordinate rounding does.
+	// background is needed. Boundary simplification is the node-count/fidelity
+	// dial [Config.PhotoSimplify]: an explicit positive tolerance is used as-is,
+	// a negative one forces it off, and the unset default derives 0.35px under
+	// Optimize (simplification is lossy, so the derived default rides the
+	// Optimize switch like coordinate rounding) and off otherwise.
 	traceOpt := regiontrace.Options{Smooth: photoBoundarySmooth}
-	if e.cfg.Optimize {
-		traceOpt.Simplify = photoBoundarySimplify
+	switch {
+	case e.cfg.PhotoSimplify > 0:
+		traceOpt.Simplify = e.cfg.PhotoSimplify
+	case e.cfg.PhotoSimplify == 0 && e.cfg.Optimize:
+		traceOpt.Simplify = defaultPhotoSimplify
 	}
 	regions := regiontrace.Trace(res.Labels, res.W, res.H, res.NumRegions, traceOpt)
 

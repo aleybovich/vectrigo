@@ -217,3 +217,29 @@ func TestKClampBounds(t *testing.T) {
 		t.Errorf("AlphaMax clamp = %v, want 1.334", got)
 	}
 }
+
+func TestPhotoSimplifyNormalization(t *testing.T) {
+	// DefaultConfig and a bare Config{} both mean "derive": 0 survives
+	// normalization (resolution to 0.35-under-Optimize happens in the engine).
+	if got := DefaultConfig().PhotoSimplify; got != 0 {
+		t.Errorf("DefaultConfig().PhotoSimplify = %v, want 0 (derive)", got)
+	}
+	if got := (Config{}).normalized().PhotoSimplify; got != 0 {
+		t.Errorf("bare Config{} PhotoSimplify = %v, want 0 (derive)", got)
+	}
+	// NaN folds to derive.
+	if got := (Config{PhotoSimplify: math.NaN()}).normalized().PhotoSimplify; got != 0 {
+		t.Errorf("NaN PhotoSimplify => %v, want 0 (derive)", got)
+	}
+	// Negative is the force-off sentinel and must be preserved, not defaulted.
+	if got := (Config{PhotoSimplify: -1}).normalized().PhotoSimplify; got >= 0 {
+		t.Errorf("negative PhotoSimplify => %v, want preserved negative (force off)", got)
+	}
+	// Positive values pass through; extremes clamp to the maximum.
+	if got := (Config{PhotoSimplify: 0.5}).normalized().PhotoSimplify; got != 0.5 {
+		t.Errorf("PhotoSimplify 0.5 => %v, want 0.5", got)
+	}
+	if got := (Config{PhotoSimplify: 999}).normalized().PhotoSimplify; got != maxPhotoSimplify {
+		t.Errorf("huge PhotoSimplify => %v, want clamped %v", got, maxPhotoSimplify)
+	}
+}

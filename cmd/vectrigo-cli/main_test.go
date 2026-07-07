@@ -293,6 +293,16 @@ func TestRunModeMatrix(t *testing.T) {
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
 		},
 		{
+			name:    "photo mode with simplify tolerance",
+			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "0.5"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+		},
+		{
+			name:    "photo mode with simplify off",
+			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "0"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+		},
+		{
 			name:    "photo mode with edge stroke",
 			args:    func(in string) []string { return []string{"-i", in, "--photo", "--edge", "stroke"} },
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
@@ -337,6 +347,18 @@ func TestRunModeMatrix(t *testing.T) {
 			args:        func(in string) []string { return []string{"-i", in, "--edge", "stroke"} },
 			wantErr:     true,
 			errContains: "--edge requires --photo",
+		},
+		{
+			name:        "simplify without photo is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--simplify", "0.5"} },
+			wantErr:     true,
+			errContains: "--simplify requires --photo",
+		},
+		{
+			name:        "negative simplify is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "-1"} },
+			wantErr:     true,
+			errContains: "--simplify must be 0 (off) or a positive tolerance",
 		},
 		{
 			name:        "edge with bogus value is rejected",

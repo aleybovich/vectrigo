@@ -5,7 +5,7 @@
 //
 //	vectrigo-cli -i <image-path> -s <sensitivity>
 //	vectrigo-cli -i <image-path> --auto-k
-//	vectrigo-cli -i <image-path> --photo [--sigma <n>] [--edge <crisp|stroke>]
+//	vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <n>] [--edge <crisp|stroke>]
 //
 // The input image is given with --input/-i and is required. It must be a PNG,
 // JPEG, or WEBP raster image.
@@ -23,14 +23,22 @@
 //     which partitions the image into small spatially-connected regions and is
 //     best for photographic content. Its detail dial is --sigma (the bilateral
 //     σ_r "detail" knob, see [vectrigo.Config.PhotoDetail]): ~8 punchy, 12 the
-//     default, 28+ soft. --sigma is only valid together with --photo. Its edge
-//     finish is --edge (see [vectrigo.Config.PhotoEdge]): "crisp" (the default)
-//     disables edge anti-aliasing for a seam-free flat-vector look, "stroke"
-//     keeps anti-aliasing and seals the sub-pixel seams with a thin same-colour
-//     stroke. --edge is only valid together with --photo.
+//     default, 28+ soft. --sigma is only valid together with --photo. Its
+//     node-count/fidelity dial is --simplify (see
+//     [vectrigo.Config.PhotoSimplify]): the boundary-simplification tolerance
+//     in pixels — 0 turns simplification OFF (maximum fidelity, every boundary
+//     corner kept, at the cost of many nodes on straight edges), ~0.35 (the
+//     default when unset) is visually near-lossless, larger values trade
+//     geometric fidelity for smaller files. --simplify is only valid together
+//     with --photo. Its edge finish is --edge (see [vectrigo.Config.PhotoEdge]):
+//     "crisp" (the default) disables edge anti-aliasing for a seam-free
+//     flat-vector look, "stroke" keeps anti-aliasing and seals the sub-pixel
+//     seams with a thin same-colour stroke. --edge is only valid together with
+//     --photo.
 //
 // Exactly one of --sensitivity, --auto-k, or --photo must be supplied. Passing
-// more than one, or none, is an error; so is --sigma or --edge without --photo.
+// more than one, or none, is an error; so is --sigma, --simplify or --edge
+// without --photo.
 //
 // The resulting SVG is written next to the input file. The output name depends
 // on the mode:
@@ -60,7 +68,7 @@ import (
 const usage = `Usage:
   vectrigo-cli -i <image-path> -s <sensitivity>
   vectrigo-cli -i <image-path> --auto-k
-  vectrigo-cli -i <image-path> --photo [--sigma <n>] [--edge <crisp|stroke>]
+  vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <n>] [--edge <crisp|stroke>]
 
 Vectorize a raster image (PNG/JPEG/WEBP) into an SVG file.
 
@@ -71,6 +79,11 @@ Options:
       --photo                 Segmentation photo mode, for photographic images.
       --sigma <n>             Photo-mode detail dial (bilateral σ_r): ~8 punchy, 12 default,
                               28+ soft. Only valid with --photo; unset uses the default (12).
+      --simplify <n>          Photo-mode boundary simplification tolerance in pixels:
+                              0 = OFF (maximum fidelity, most nodes), 0.35 = default
+                              (visually near-lossless, far fewer nodes on straight edges),
+                              larger = smaller files but coarser shapes. Seams never open
+                              at any setting. Only valid with --photo.
       --edge <crisp|stroke>   Photo-mode edge finish: crisp (default) disables edge
                               anti-aliasing for a seam-free flat look; stroke keeps
                               anti-aliasing and seals seams with a thin same-colour stroke.
@@ -81,8 +94,8 @@ Modes (mutually exclusive):
   Supply --sensitivity for a fixed quantization detail level (best for flat / logo
   art), OR --auto-k to let the engine choose the colour count K automatically, OR
   --photo for the segmentation pipeline (best for photographic images). Exactly one
-  is required: passing more than one, or none, is an error. --sigma and --edge
-  require --photo.
+  is required: passing more than one, or none, is an error. --sigma, --simplify and
+  --edge require --photo.
 
 The output SVG is written next to the input file:
   - with a sensitivity, the input's extension is replaced by ".<sensitivity>.svg".
@@ -94,6 +107,7 @@ Examples:
   vectrigo-cli -i photos/street.png --auto-k     =>  photos/street.svg
   vectrigo-cli -i photos/street.png --photo      =>  photos/street.photo.svg
   vectrigo-cli -i photos/street.png --photo --sigma 8  =>  photos/street.photo.svg
+  vectrigo-cli -i photos/street.png --photo --simplify 0  =>  photos/street.photo.svg
   vectrigo-cli -i photos/street.png --photo --edge stroke  =>  photos/street.photo.svg
 `
 
@@ -152,6 +166,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		autoK       bool
 		photo       bool
 		sigma       float64
+		simplify    float64
 		edge        string
 		help        bool
 	)
@@ -170,6 +185,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// conflating it with any in-band value; an unset --sigma leaves PhotoDetail
 	// at the engine default.
 	fs.Float64Var(&sigma, "sigma", math.NaN(), "photo-mode detail dial (bilateral σ_r)")
+	// Default of NaN lets us detect whether --simplify was supplied; an unset
+	// --simplify leaves PhotoSimplify at the engine default (0.35px).
+	fs.Float64Var(&simplify, "simplify", math.NaN(), "photo-mode boundary simplification tolerance in px (0 = off)")
 	// Default "" lets us detect whether --edge was supplied; an unset --edge
 	// leaves PhotoEdge at the engine default (crisp).
 	fs.StringVar(&edge, "edge", "", "photo-mode edge finish: crisp (default) or stroke")
@@ -198,6 +216,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// line (both use sentinel defaults, so a value alone can't tell us).
 	sensitivitySet := false
 	sigmaSet := false
+	simplifySet := false
 	edgeSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -205,6 +224,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			sensitivitySet = true
 		case "sigma":
 			sigmaSet = true
+		case "simplify":
+			simplifySet = true
 		case "edge":
 			edgeSet = true
 		}
@@ -219,6 +240,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if sigmaSet && !photo {
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("--sigma requires --photo")
+	}
+
+	// --simplify only tunes photo mode; it is meaningless without --photo.
+	if simplifySet && !photo {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("--simplify requires --photo")
 	}
 
 	// --edge only tunes photo mode; it is meaningless without --photo.
@@ -260,6 +287,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("--sigma must be a finite number")
 	}
 
+	// --simplify: 0 means OFF (maximum fidelity), a positive value is the
+	// tolerance in pixels (the engine clamps extremes). Negative or non-finite
+	// values are user errors — the CLI keeps the intuitive 0 = off surface and
+	// maps it to the library's sign convention below.
+	if photo && simplifySet && (math.IsNaN(simplify) || math.IsInf(simplify, 0) || simplify < 0) {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("--simplify must be 0 (off) or a positive tolerance in pixels")
+	}
+
 	// --edge accepts only the two named finishes.
 	if photo && edgeSet {
 		switch edge {
@@ -283,6 +319,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 		cfg.Photo = true
 		if sigmaSet {
 			cfg.PhotoDetail = sigma
+		}
+		if simplifySet {
+			if simplify == 0 {
+				cfg.PhotoSimplify = -1 // CLI 0 = off; the library's off sentinel is negative
+			} else {
+				cfg.PhotoSimplify = simplify
+			}
 		}
 		if edgeSet && edge == "stroke" {
 			cfg.PhotoEdge = vectrigo.PhotoEdgeStroke

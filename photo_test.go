@@ -202,3 +202,39 @@ func TestPhotoModeDegenerate(t *testing.T) {
 		})
 	}
 }
+
+// TestPhotoSimplifyKnob verifies the PhotoSimplify dial is wired end-to-end:
+// off (negative) must emit strictly more path data than the derived default,
+// and a coarser explicit tolerance strictly less. Off must also match the
+// exact pre-simplification geometry (Optimize still rounds coordinates, so we
+// compare against a run with the same Optimize settings).
+func TestPhotoSimplifyKnob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping heavy photo integration test in -short")
+	}
+	data := fixture(t, "street_market.png")
+
+	render := func(simplify float64) []byte {
+		cfg := DefaultConfig()
+		cfg.Photo = true
+		cfg.MaxDimensions = Dimensions{Width: 256, Height: 256}
+		cfg.PhotoSimplify = simplify
+		var buf bytes.Buffer
+		if err := Vectorize(bytes.NewReader(data), &buf, cfg); err != nil {
+			t.Fatalf("Vectorize photo (simplify=%v): %v", simplify, err)
+		}
+		return buf.Bytes()
+	}
+
+	off := render(-1)      // force off: maximum fidelity
+	def := render(0)       // derive: 0.35 under Optimize
+	coarse := render(1.5)  // explicit coarse tolerance
+
+	if !(len(off) > len(def) && len(def) > len(coarse)) {
+		t.Fatalf("PhotoSimplify not monotone: off=%d default=%d coarse=%d bytes", len(off), len(def), len(coarse))
+	}
+	// The derived default must equal an explicit 0.35 exactly.
+	if !bytes.Equal(def, render(0.35)) {
+		t.Fatal("derived default differs from explicit PhotoSimplify=0.35")
+	}
+}

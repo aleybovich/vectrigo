@@ -416,3 +416,25 @@ func TestEmptyImage(t *testing.T) {
 		t.Fatalf("empty image: got NumRegions=%d len(Labels)=%d, want 0/0", r.NumRegions, len(r.Labels))
 	}
 }
+
+func TestDefaultOptions(t *testing.T) {
+	o := DefaultOptions()
+	if o.RangeSigma != DefaultRangeSigma || DefaultRangeSigma != 12 {
+		t.Fatalf("DefaultOptions RangeSigma = %v, DefaultRangeSigma = %v, want 12", o.RangeSigma, DefaultRangeSigma)
+	}
+	if o.PreFilter != PreFilterBilateral {
+		t.Fatalf("DefaultOptions PreFilter = %v, want bilateral", o.PreFilter)
+	}
+	if o.K <= 0 || o.MinSize <= 0 || o.SpatialSigma <= 0 || o.BoundarySmooth < 0 {
+		t.Fatalf("DefaultOptions has non-sensible values: %+v", o)
+	}
+	// It must produce a valid segmentation on a small image.
+	img := image.NewNRGBA(image.Rect(0, 0, 24, 24))
+	for i := range img.Pix {
+		img.Pix[i] = 255
+	}
+	res := Segment(img, DefaultOptions())
+	if res.NumRegions < 1 {
+		t.Fatalf("DefaultOptions produced %d regions on a solid image, want >=1", res.NumRegions)
+	}
+}

@@ -115,6 +115,19 @@ type Options struct {
 	// RangeSigma is the range (colour-difference) parameter σ_r of the
 	// bilateral filter: smaller values preserve more edges, larger values
 	// blend across bigger colour differences. Only PreFilterBilateral uses it.
+	//
+	// It is the primary "detail vs smoothness" dial for photo vectorization.
+	// The reasonable range is roughly [8, 40]; DefaultRangeSigma (12) is the
+	// balanced recommendation:
+	//   - ~28–40: soft, abstract output — low-contrast facial shading and small
+	//     text get blended away.
+	//   - ~12 (default): preserves facial contrast and small-sign lettering
+	//     while still denoising smooth gradients into clean regions.
+	//   - ~8: even punchier, but region count climbs and faces can start to look
+	//     harsh/over-segmented.
+	//   - below ~8: approaches no filtering — noise and pixel-jaggies return and
+	//     the region count (and file size) grows sharply.
+	// Values ≤ 0 make the bilateral filter a no-op (identity).
 	RangeSigma float64
 
 	// BoundarySmooth is the number of boundary-smoothing iterations applied to
@@ -132,6 +145,29 @@ type Options struct {
 	// field existed. A few iterations (1–5) suffice; cost is O(BoundarySmooth ·
 	// W · H).
 	BoundarySmooth int
+}
+
+// DefaultRangeSigma is the recommended bilateral RangeSigma (σ_r) for photo
+// vectorization: the balanced point between preserving fine contrast (punchy
+// faces, legible small text) and denoising smooth gradients into clean
+// regions. See [Options.RangeSigma] for the full range and trade-offs.
+const DefaultRangeSigma = 12
+
+// DefaultOptions returns the recommended settings for region-first
+// vectorization of a photographic image, tuned on a ~1024×559 image: an
+// edge-preserving bilateral pre-filter, fine regions, and a few boundary-
+// smoothing iterations. Callers adjust from here — most often [Options.K]
+// (region count) and [Options.RangeSigma] (detail vs smoothness, held at
+// [DefaultRangeSigma]).
+func DefaultOptions() Options {
+	return Options{
+		K:              100,
+		MinSize:        4,
+		PreFilter:      PreFilterBilateral,
+		SpatialSigma:   2,
+		RangeSigma:     DefaultRangeSigma,
+		BoundarySmooth: 3,
+	}
 }
 
 // Result holds a per-pixel region labelling produced by Segment.

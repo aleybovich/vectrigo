@@ -1,7 +1,7 @@
-// Command segdemo exercises the internal/segment Felzenszwalb–Huttenlocher
-// segmentation library end-to-end on a real image and renders the result to
-// SVG, so the segmentation front-end can be evaluated visually against the
-// existing colour-quantization path.
+// Command segdemo exercises the github.com/aleybovich/segment
+// Felzenszwalb–Huttenlocher segmentation library end-to-end on a real image and
+// renders the result to SVG, so the segmentation front-end can be evaluated
+// visually against the existing colour-quantization path.
 //
 // Usage:
 //
@@ -40,9 +40,9 @@ import (
 
 	"github.com/aleybovich/bitrace"
 	"github.com/aleybovich/minisvg"
+	"github.com/aleybovich/segment"
 	"github.com/aleybovich/vectrigo/internal/imageutil"
 	"github.com/aleybovich/vectrigo/internal/normalize"
-	"github.com/aleybovich/vectrigo/internal/segment"
 )
 
 func main() {

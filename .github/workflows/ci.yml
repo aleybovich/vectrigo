@@ -4,11 +4,12 @@ name: CI
 #   .        -> github.com/aleybovich/vectrigo   (engine + cmd/vectrigo-cli)
 #   bitrace/ -> github.com/aleybovich/bitrace     (clean-room tracer, own go.mod)
 #   minisvg/ -> github.com/aleybovich/minisvg     (SVG builder, own go.mod, zero deps)
+#   segment/ -> github.com/aleybovich/segment     (image segmentation, own go.mod, zero deps)
 #
 # This workflow enforces the two non-negotiable constraints from plan.md §1:
 #   1.1 Pure Go only (CGO_ENABLED=0, must cross-compile for any GOOS/GOARCH)
 #   1.2 Every third-party dependency must carry a permissive license
-# across all three modules.
+# across all four modules.
 
 on:
   push: {} # any branch
@@ -24,7 +25,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------
-  # 1. test: build + vet + test, CGO disabled, across all three modules.
+  # 1. test: build + vet + test, CGO disabled, across all four modules.
   # ---------------------------------------------------------------------
   test:
     name: test (${{ matrix.name }})
@@ -39,6 +40,8 @@ jobs:
             dir: bitrace
           - name: minisvg
             dir: minisvg
+          - name: segment
+            dir: segment
     steps:
       - uses: actions/checkout@v4
 
@@ -136,11 +139,15 @@ jobs:
         working-directory: minisvg
         run: go build ./...
 
+      - name: go build (segment module)
+        working-directory: segment
+        run: go build ./...
+
   # ---------------------------------------------------------------------
   # 4. license-audit: enforce plan.md §1.2 - every THIRD-PARTY dependency
   #    must be permissively licensed. Run for the root engine module and
-  #    for bitrace (the two modules with third-party deps; minisvg has
-  #    none).
+  #    for bitrace (the two modules with third-party deps; minisvg and
+  #    segment have none).
   #
   #    Gotchas handled below (see inline comments):
   #      - Our OWN modules (PolyForm Noncommercial / MIT) are not
@@ -183,6 +190,7 @@ jobs:
             --ignore github.com/aleybovich/vectrigo \
             --ignore github.com/aleybovich/bitrace \
             --ignore github.com/aleybovich/minisvg \
+            --ignore github.com/aleybovich/segment \
             --ignore honnef.co/go/stuff
 
       - name: License audit (bitrace module)

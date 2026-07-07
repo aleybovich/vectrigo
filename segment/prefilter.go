@@ -3,8 +3,6 @@ package segment
 import (
 	"image"
 	"math"
-
-	"github.com/disintegration/imaging"
 )
 
 // PreFilter selects the optional pre-smoothing applied to the working image
@@ -55,7 +53,7 @@ func preFilterPix(img *image.NRGBA, opt Options) []uint8 {
 	switch opt.PreFilter {
 	case PreFilterNone:
 		if opt.Sigma > 0 {
-			return imaging.Blur(img, opt.Sigma).Pix
+			return GaussianBlur(img, opt.Sigma).Pix
 		}
 		return img.Pix
 	case PreFilterGaussian:
@@ -66,7 +64,7 @@ func preFilterPix(img *image.NRGBA, opt Options) []uint8 {
 		if s <= 0 {
 			return img.Pix
 		}
-		return imaging.Blur(img, s).Pix
+		return GaussianBlur(img, s).Pix
 	case PreFilterBilateral:
 		return BilateralFilter(img, opt.SpatialSigma, opt.RangeSigma).Pix
 	case PreFilterKuwahara:
@@ -308,6 +306,109 @@ func KuwaharaFilter(img *image.NRGBA, radius int) *image.NRGBA {
 			out.Pix[ci+1] = clampRound(bestG)
 			out.Pix[ci+2] = clampRound(bestB)
 			out.Pix[ci+3] = pix[ci+3]
+		}
+	}
+	return out
+}
+
+// GaussianBlur applies a separable Gaussian blur of standard deviation sigma to
+// img and returns a new *image.NRGBA of the same bounds. Only R,G,B are
+// smoothed; the alpha channel is passed through unchanged. It is a pure-Go,
+// zero-dependency reimplementation of the legacy Gaussian pre-filter (used by
+// PreFilterGaussian and by the back-compat Sigma path); it is not guaranteed
+// byte-identical to any particular third-party blur, only to be a correct,
+// deterministic Gaussian.
+//
+// The kernel is a normalized 1-D Gaussian of radius ⌈3·σ⌉ (beyond which the
+// Gaussian weight is negligible). The blur is applied in two passes —
+// horizontal then vertical — which is exactly equivalent to a full 2-D
+// Gaussian convolution because the 2-D Gaussian is separable. Border pixels are
+// handled by clamping neighbour coordinates to the image bounds (edge
+// extension). The computation uses a fixed traversal order and no randomness,
+// so it is fully deterministic. A sigma <= 0 yields an identity copy.
+func GaussianBlur(img *image.NRGBA, sigma float64) *image.NRGBA {
+	b := img.Bounds()
+	out := image.NewNRGBA(b)
+	w, h := b.Dx(), b.Dy()
+	if w == 0 || h == 0 {
+		return out
+	}
+	if sigma <= 0 {
+		copy(out.Pix, img.Pix)
+		return out
+	}
+
+	// Normalized 1-D Gaussian kernel of radius ⌈3·σ⌉.
+	radius := int(math.Ceil(3 * sigma))
+	if radius < 1 {
+		radius = 1
+	}
+	kernel := make([]float64, 2*radius+1)
+	twoS2 := 2 * sigma * sigma
+	var sum float64
+	for i := -radius; i <= radius; i++ {
+		v := math.Exp(-float64(i*i) / twoS2)
+		kernel[i+radius] = v
+		sum += v
+	}
+	for i := range kernel {
+		kernel[i] /= sum
+	}
+
+	// Horizontal pass: img -> tmp. tmp holds the blurred R,G,B (as float64 is
+	// unnecessary; uint8 round-trip between passes loses too much precision, so
+	// carry intermediate channel values in a float buffer). Alpha is copied
+	// through from the source untouched.
+	tmpR := make([]float64, w*h)
+	tmpG := make([]float64, w*h)
+	tmpB := make([]float64, w*h)
+	pix := img.Pix
+	for y := 0; y < h; y++ {
+		row := y * w
+		for x := 0; x < w; x++ {
+			var accR, accG, accB float64
+			for k := -radius; k <= radius; k++ {
+				nx := x + k
+				if nx < 0 {
+					nx = 0
+				} else if nx >= w {
+					nx = w - 1
+				}
+				o := (row + nx) * 4
+				wt := kernel[k+radius]
+				accR += wt * float64(pix[o])
+				accG += wt * float64(pix[o+1])
+				accB += wt * float64(pix[o+2])
+			}
+			p := row + x
+			tmpR[p] = accR
+			tmpG[p] = accG
+			tmpB[p] = accB
+		}
+	}
+
+	// Vertical pass: tmp -> out. Alpha passed through from the original image.
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			var accR, accG, accB float64
+			for k := -radius; k <= radius; k++ {
+				ny := y + k
+				if ny < 0 {
+					ny = 0
+				} else if ny >= h {
+					ny = h - 1
+				}
+				p := ny*w + x
+				wt := kernel[k+radius]
+				accR += wt * tmpR[p]
+				accG += wt * tmpG[p]
+				accB += wt * tmpB[p]
+			}
+			o := (y*w + x) * 4
+			out.Pix[o] = clampRound(accR)
+			out.Pix[o+1] = clampRound(accG)
+			out.Pix[o+2] = clampRound(accB)
+			out.Pix[o+3] = pix[o+3]
 		}
 	}
 	return out

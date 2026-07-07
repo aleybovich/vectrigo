@@ -5,8 +5,6 @@ import (
 	"image/color"
 	"reflect"
 	"testing"
-
-	"github.com/disintegration/imaging"
 )
 
 // coordNoise returns a deterministic per-pixel noise value in [-10,10] derived
@@ -143,10 +141,55 @@ func TestKuwaharaDeterminism(t *testing.T) {
 	}
 }
 
-// TestBackCompatSigmaMapping guards the backward-compatibility contract by
-// exercising preFilterPix directly (same package): the zero-value Options must
-// leave the image untouched, and a Sigma-only Options must route through the
-// exact legacy imaging.Blur path.
+// TestGaussianBlurSmooths asserts the in-house separable Gaussian is a correct,
+// deterministic smoother: on a noisy image it reduces within-region variance,
+// at σ=0 it is an identity copy, and it is bit-for-bit reproducible. (It
+// replaces the old assertion of byte-equality against imaging.Blur, which is no
+// longer a dependency; the exact blur weights are an implementation detail — we
+// only require a valid Gaussian.)
+func TestGaussianBlurSmooths(t *testing.T) {
+	const w, h = 60, 40
+	in := stepNoisyImage(w, h, 60, 200)
+
+	// σ = 0 is an identity copy (RGB unchanged, alpha passed through).
+	if id := GaussianBlur(in, 0); !reflect.DeepEqual(id.Pix, in.Pix) {
+		t.Fatal("GaussianBlur at sigma=0 must be an identity copy")
+	}
+
+	// σ > 0 smooths: within-region variance drops on the deep-left interior,
+	// away from the step edge (a Gaussian blurs everything, so variance strictly
+	// decreases here).
+	out := GaussianBlur(in, 1.5)
+	_, inVar := meanVar(in, 5, 25)
+	_, outVar := meanVar(out, 5, 25)
+	if inVar == 0 {
+		t.Fatal("test setup error: input has no within-region variance to reduce")
+	}
+	if !(outVar < inVar) {
+		t.Fatalf("GaussianBlur did not reduce within-region variance: in=%.2f out=%.2f", inVar, outVar)
+	}
+
+	// Deterministic: identical inputs yield identical output.
+	a := GaussianBlur(in, 1.5)
+	b := GaussianBlur(in, 1.5)
+	if !reflect.DeepEqual(a.Pix, b.Pix) {
+		t.Fatal("GaussianBlur output differs across identical runs")
+	}
+
+	// Alpha is passed through untouched even where RGB is filtered.
+	for i := 3; i < len(out.Pix); i += 4 {
+		if out.Pix[i] != in.Pix[i] {
+			t.Fatalf("GaussianBlur altered alpha at index %d: got %d want %d", i, out.Pix[i], in.Pix[i])
+		}
+	}
+}
+
+// TestBackCompatSigmaMapping guards the backward-compatibility routing contract
+// by exercising preFilterPix directly (same package): the zero-value Options
+// must leave the image untouched, and a Sigma-only Options (PreFilterNone) must
+// route through the in-house Gaussian — identically to an explicit
+// PreFilterGaussian of the same radius. The documented semantics (Sigma>0 ⇒
+// Gaussian, Sigma==0 ⇒ identity) are preserved.
 func TestBackCompatSigmaMapping(t *testing.T) {
 	const w, h = 32, 24
 	img := solidImage(w, h, func(x, y int) color.NRGBA {
@@ -159,16 +202,25 @@ func TestBackCompatSigmaMapping(t *testing.T) {
 		t.Fatal("Options{} must not alter the working pixels")
 	}
 
-	// Sigma-only (PreFilterNone): must equal the legacy imaging.Blur output.
-	wantBlur := imaging.Blur(img, 0.8).Pix
-	if got := preFilterPix(img, Options{Sigma: 0.8}); !reflect.DeepEqual(got, wantBlur) {
-		t.Fatal("Sigma-only Options must map to the legacy Gaussian blur")
+	// Sigma == 0 explicitly is also identity (documented Sigma==0 ⇒ no blur).
+	if got := preFilterPix(img, Options{Sigma: 0}); !reflect.DeepEqual(got, img.Pix) {
+		t.Fatal("Sigma==0 must not alter the working pixels")
 	}
 
-	// Explicit PreFilterGaussian with SpatialSigma must match the same blur,
-	// and it must equal the legacy Sigma path for the same radius.
+	// Sigma-only (PreFilterNone) must route through the in-house Gaussian: it
+	// equals GaussianBlur(img, sigma), NOT the original buffer (Sigma>0 ⇒ blur).
+	wantBlur := GaussianBlur(img, 0.8).Pix
+	if got := preFilterPix(img, Options{Sigma: 0.8}); !reflect.DeepEqual(got, wantBlur) {
+		t.Fatal("Sigma-only Options must route through the in-house Gaussian")
+	}
+	if reflect.DeepEqual(wantBlur, img.Pix) {
+		t.Fatal("test setup error: Sigma=0.8 blur produced no change to detect")
+	}
+
+	// Explicit PreFilterGaussian with SpatialSigma must equal the legacy Sigma
+	// path for the same radius (both are the in-house Gaussian).
 	if got := preFilterPix(img, Options{PreFilter: PreFilterGaussian, SpatialSigma: 0.8}); !reflect.DeepEqual(got, wantBlur) {
-		t.Fatal("PreFilterGaussian SpatialSigma must match imaging.Blur")
+		t.Fatal("PreFilterGaussian SpatialSigma must match the legacy Sigma Gaussian path")
 	}
 }
 

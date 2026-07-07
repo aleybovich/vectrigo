@@ -6,9 +6,12 @@ replace github.com/aleybovich/bitrace => ./bitrace
 
 replace github.com/aleybovich/minisvg => ./minisvg
 
+replace github.com/aleybovich/segment => ./segment
+
 require (
 	github.com/aleybovich/bitrace v0.0.0-00010101000000-000000000000
 	github.com/aleybovich/minisvg v0.0.0-00010101000000-000000000000
+	github.com/aleybovich/segment v0.0.0-00010101000000-000000000000
 	github.com/disintegration/imaging v1.6.2
 	github.com/muesli/clusters v0.0.0-20180605185049-a07a36e67d36
 	github.com/muesli/kmeans v0.3.1

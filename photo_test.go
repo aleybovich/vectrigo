@@ -28,9 +28,10 @@ func solidPNG(t *testing.T, w, h int, c color.NRGBA) []byte {
 }
 
 // TestPhotoModeStreetMarket exercises the full library API in photo mode on the
-// photographic fixture: it must emit a well-formed, non-empty SVG with a <rect>
-// background and same-colour stroked region paths, at a plausible region count,
-// deterministically.
+// photographic fixture. With the default edge finish (PhotoEdgeCrisp) it must
+// emit a well-formed, non-empty SVG that tiles the plane with shared region
+// boundaries: shape-rendering="crispEdges", NO background <rect>, fill-only
+// region paths (no stroke), at a plausible region count, deterministically.
 func TestPhotoModeStreetMarket(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping heavy photo integration test in -short")
@@ -57,20 +58,25 @@ func TestPhotoModeStreetMarket(t *testing.T) {
 	}
 
 	s := string(out)
-	if !strings.Contains(s, "<rect") {
-		t.Error("photo SVG has no <rect background")
+	// Crisp default: crispEdges, gapless tiling means no background rect, and
+	// fill-only paths (no stroke).
+	if !strings.Contains(s, `shape-rendering="crispEdges"`) {
+		t.Error("crisp photo SVG missing shape-rendering=\"crispEdges\"")
 	}
-	if !strings.Contains(s, "stroke=") {
-		t.Error("photo SVG has no stroked paths")
+	if strings.Contains(s, "<rect") {
+		t.Error("crisp photo SVG unexpectedly has a <rect background (tiling is gapless)")
 	}
-	if !strings.Contains(s, "stroke-width=") {
-		t.Error("photo SVG has no stroke-width")
+	if strings.Contains(s, "stroke=") {
+		t.Error("crisp photo SVG unexpectedly contains a stroke")
 	}
 
-	// Region count: a real photo fragments into many regions. The <rect> is one
-	// non-path element; paths are the regions.
+	// Region count: a real photo fragments into many regions. Every path is a
+	// region (no rect).
 	if len(doc.ds) < 300 {
 		t.Errorf("photo region path count = %d, want > 300", len(doc.ds))
+	}
+	if len(doc.fills) != len(doc.ds) {
+		t.Errorf("every region path must carry a fill: %d fills for %d paths", len(doc.fills), len(doc.ds))
 	}
 
 	// No NaN/Inf coordinates.
@@ -88,6 +94,53 @@ func TestPhotoModeStreetMarket(t *testing.T) {
 	}
 	if !bytes.Equal(out, buf2.Bytes()) {
 		t.Error("photo mode is not deterministic: two runs differ")
+	}
+}
+
+// TestPhotoModeStrokeEdge exercises PhotoEdgeStroke: the SVG must keep
+// anti-aliasing (NO crispEdges) and seal seams with same-colour strokes, still
+// with no background rect, well-formed and deterministic.
+func TestPhotoModeStrokeEdge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping heavy photo integration test in -short")
+	}
+	data := fixture(t, "street_market.png")
+
+	cfg := DefaultConfig()
+	cfg.Photo = true
+	cfg.PhotoEdge = PhotoEdgeStroke
+	cfg.MaxDimensions = Dimensions{Width: 256, Height: 256}
+
+	var buf bytes.Buffer
+	if err := Vectorize(bytes.NewReader(data), &buf, cfg); err != nil {
+		t.Fatalf("Vectorize photo stroke: %v", err)
+	}
+	out := buf.Bytes()
+	doc := parse(t, out) // fails the test if not well-formed
+	s := string(out)
+
+	if strings.Contains(s, "crispEdges") {
+		t.Error("stroke photo SVG unexpectedly has crispEdges (anti-aliasing should be kept)")
+	}
+	if !strings.Contains(s, "stroke=") {
+		t.Error("stroke photo SVG has no stroked paths")
+	}
+	if !strings.Contains(s, "stroke-width=") {
+		t.Error("stroke photo SVG has no stroke-width")
+	}
+	if strings.Contains(s, "<rect") {
+		t.Error("stroke photo SVG unexpectedly has a <rect background (tiling is gapless)")
+	}
+	if len(doc.ds) < 300 {
+		t.Errorf("photo region path count = %d, want > 300", len(doc.ds))
+	}
+
+	var buf2 bytes.Buffer
+	if err := Vectorize(bytes.NewReader(data), &buf2, cfg); err != nil {
+		t.Fatalf("Vectorize photo stroke (2nd): %v", err)
+	}
+	if !bytes.Equal(out, buf2.Bytes()) {
+		t.Error("photo stroke mode is not deterministic: two runs differ")
 	}
 }
 
@@ -121,7 +174,8 @@ func TestPhotoDetailInertWhenPhotoFalse(t *testing.T) {
 }
 
 // TestPhotoModeDegenerate feeds tiny and single-colour images through photo mode:
-// it must not panic and must emit a well-formed <svg> with the background rect.
+// it must not panic and must emit a well-formed <svg>. With gapless tiling there
+// is no background rect; a single-colour image is one region covering the canvas.
 func TestPhotoModeDegenerate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -142,8 +196,8 @@ func TestPhotoModeDegenerate(t *testing.T) {
 			if doc.xmlns != "http://www.w3.org/2000/svg" {
 				t.Errorf("xmlns = %q", doc.xmlns)
 			}
-			if !strings.Contains(buf.String(), "<rect") {
-				t.Error("degenerate photo SVG has no <rect background")
+			if strings.Contains(buf.String(), "<rect") {
+				t.Error("degenerate photo SVG unexpectedly has a <rect background")
 			}
 		})
 	}

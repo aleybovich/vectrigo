@@ -36,6 +36,19 @@ type Dimensions struct {
 	Height int
 }
 
+// PhotoEdge selects how photo mode (see [Config.Photo]) finishes region edges.
+// It has NO effect when Photo is false.
+type PhotoEdge int
+
+const (
+	// PhotoEdgeCrisp disables edge anti-aliasing (shape-rendering=crispEdges):
+	// crispest, flat-vector look, perfectly seam-free. The default.
+	PhotoEdgeCrisp PhotoEdge = iota
+	// PhotoEdgeStroke keeps anti-aliasing and seals the sub-pixel seams with a
+	// thin same-colour stroke on each region: slightly softer edges.
+	PhotoEdgeStroke
+)
+
 // Config configures a vectorization. The primary knob is [Config.Sensitivity];
 // the remaining fields are advanced overrides that default cleanly from zero.
 //
@@ -163,6 +176,19 @@ type Config struct {
 	//     while denoising smooth gradients into clean regions.
 	//   - ~28+: soft / abstract — low-contrast shading and small text blend away.
 	PhotoDetail float64
+
+	// PhotoEdge selects the anti-aliasing finish for photo mode (see
+	// [Config.Photo]); it has NO effect when Photo is false.
+	//
+	// The regions tile the plane exactly (shared boundaries), so no background
+	// is ever needed. The zero value, [PhotoEdgeCrisp] (a bare Config{}, and
+	// DefaultConfig's value), disables edge anti-aliasing (shape-rendering=
+	// crispEdges) for the crispest, perfectly seam-free flat-vector look — the
+	// recommended default. [PhotoEdgeStroke] instead keeps anti-aliasing and
+	// seals the residual sub-pixel seams with a thin same-colour stroke on each
+	// region, for slightly softer edges. Any out-of-range value is clamped to
+	// PhotoEdgeCrisp in [Config.normalized].
+	PhotoEdge PhotoEdge
 }
 
 // DefaultConfig returns the recommended defaults and is the intended entry
@@ -182,6 +208,7 @@ func DefaultConfig() Config {
 		Precision:     2,
 		Photo:         false,
 		PhotoDetail:   defaultPhotoDetail,
+		PhotoEdge:     PhotoEdgeCrisp,
 	}
 }
 
@@ -232,6 +259,12 @@ func (c Config) normalized() Config {
 		c.PhotoDetail = defaultPhotoDetail
 	}
 	c.PhotoDetail = clampFloat(c.PhotoDetail, minPhotoDetail, maxPhotoDetail)
+
+	// PhotoEdge: clamp any out-of-range value to the crisp default. Inert when
+	// Photo is false, but resolved unconditionally for predictability.
+	if c.PhotoEdge != PhotoEdgeCrisp && c.PhotoEdge != PhotoEdgeStroke {
+		c.PhotoEdge = PhotoEdgeCrisp
+	}
 
 	return c
 }

@@ -293,6 +293,16 @@ func TestRunModeMatrix(t *testing.T) {
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
 		},
 		{
+			name:    "photo mode with edge stroke",
+			args:    func(in string) []string { return []string{"-i", in, "--photo", "--edge", "stroke"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+		},
+		{
+			name:    "photo mode with edge crisp",
+			args:    func(in string) []string { return []string{"-i", in, "--photo", "--edge", "crisp"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+		},
+		{
 			name:        "no mode selected",
 			args:        func(in string) []string { return []string{"-i", in} },
 			wantErr:     true,
@@ -321,6 +331,18 @@ func TestRunModeMatrix(t *testing.T) {
 			args:        func(in string) []string { return []string{"-i", in, "--sigma", "8"} },
 			wantErr:     true,
 			errContains: "--sigma requires --photo",
+		},
+		{
+			name:        "edge without photo is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--edge", "stroke"} },
+			wantErr:     true,
+			errContains: "--edge requires --photo",
+		},
+		{
+			name:        "edge with bogus value is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--photo", "--edge", "bogus"} },
+			wantErr:     true,
+			errContains: "--edge must be",
 		},
 		{
 			name:        "missing input flag",

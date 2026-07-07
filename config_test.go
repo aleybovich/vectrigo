@@ -143,6 +143,30 @@ func TestPhotoDetailNormalization(t *testing.T) {
 	}
 }
 
+func TestPhotoEdgeNormalization(t *testing.T) {
+	// DefaultConfig and a bare Config{} both default to crisp (the zero value).
+	if got := DefaultConfig().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("DefaultConfig().PhotoEdge = %v, want PhotoEdgeCrisp", got)
+	}
+	if got := (Config{}).PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("bare Config{} PhotoEdge = %v, want PhotoEdgeCrisp", got)
+	}
+	if got := DefaultConfig().normalized().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("normalized DefaultConfig PhotoEdge = %v, want PhotoEdgeCrisp", got)
+	}
+	// A valid explicit stroke survives normalization.
+	if got := (Config{PhotoEdge: PhotoEdgeStroke}).normalized().PhotoEdge; got != PhotoEdgeStroke {
+		t.Errorf("PhotoEdgeStroke => %v, want PhotoEdgeStroke", got)
+	}
+	// Out-of-range values clamp back to crisp.
+	if got := (Config{PhotoEdge: PhotoEdge(99)}).normalized().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("out-of-range PhotoEdge(99) => %v, want PhotoEdgeCrisp", got)
+	}
+	if got := (Config{PhotoEdge: PhotoEdge(-1)}).normalized().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("out-of-range PhotoEdge(-1) => %v, want PhotoEdgeCrisp", got)
+	}
+}
+
 func TestOverridesWin(t *testing.T) {
 	// Explicit K survives (resolution large enough not to clamp).
 	cfg := DefaultConfig()

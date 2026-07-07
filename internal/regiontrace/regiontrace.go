@@ -4,7 +4,7 @@
 // so filled regions meet with no gaps and no overlap — and need no dilation.
 //
 // This is the shared-boundary alternative to tracing each region's mask
-// independently (as internal/pipeline.TraceRegions does via bitrace). Two
+// independently (as a per-region bitrace trace would). Two
 // independently traced neighbours may disagree on a jagged/diagonal shared edge
 // by ~1px, leaving real geometric gaps through which the background bleeds as
 // seam artifacts. Here the label map is traced as ONE planar subdivision: every

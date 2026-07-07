@@ -2,8 +2,6 @@ package vectrigo
 
 import (
 	"fmt"
-	"image"
-	"image/color"
 	"io"
 
 	"github.com/aleybovich/bitrace"
@@ -12,7 +10,15 @@ import (
 	"github.com/aleybovich/vectrigo/internal/normalize"
 	"github.com/aleybovich/vectrigo/internal/pipeline"
 	"github.com/aleybovich/vectrigo/internal/quantize"
+	"github.com/aleybovich/vectrigo/internal/regiontrace"
 )
+
+// photoBoundarySmooth is the number of Laplacian smoothing iterations applied to
+// the shared region-boundary corner graph in photo mode (see
+// [regiontrace.Options.Smooth]). It is a tuned internal constant, not a public
+// knob: 3 iterations relax the pixel staircase into smooth region edges while
+// keeping the exact shared-boundary tiling that makes photo mode seam-free.
+const photoBoundarySmooth = 3
 
 // Vectorize reads a raster image (PNG/JPEG/WEBP) from r, converts it to SVG
 // using cfg, and writes the SVG document to w. It is stateless and safe for
@@ -91,12 +97,13 @@ func (e *Engine) Convert(r io.Reader, w io.Writer) error {
 	return nil
 }
 
-// convertPhoto runs the region-first PHOTO pipeline (Stage II+III+IV replaced by
-// Felzenszwalb graph segmentation → per-region mean colour → per-region trace →
-// stacked painter's assembly). It is selected by [Config.Photo]; the quantize
-// path in [Engine.Convert] is left entirely untouched, so Photo=false output is
-// byte-identical to the historical engine. Errors keep the "vectrigo: <stage>:"
-// convention.
+// convertPhoto runs the region-first PHOTO pipeline: Felzenszwalb graph
+// segmentation → per-region mean colour → whole-label-map planar trace (via
+// [regiontrace.Trace], which shares boundary geometry between adjacent regions
+// so they tile the plane with no seams) → stacked painter's assembly. It is
+// selected by [Config.Photo]; the quantize path in [Engine.Convert] is left
+// entirely untouched, so Photo=false output is byte-identical to the historical
+// engine. Errors keep the "vectrigo: <stage>:" convention.
 func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
 	// DefaultOptions is the segment library's tuned baseline (K=100, MinSize=4,
 	// SpatialSigma=2, BoundarySmooth=3); only the range-sigma detail dial is
@@ -107,54 +114,26 @@ func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
 	res := segment.Segment(img.NRGBA, opt)
 	colors := segment.MeanColors(img.NRGBA, res)
 
-	b := img.NRGBA.Bounds()
-	traceCfg := bitrace.Config{
-		// TurdSize 0: regions are already size-floored by segment's MinSize, so no
-		// additional speckle removal. AlphaMax/Optimize honour the shared config.
-		TurdSize: 0,
-		AlphaMax: e.cfg.AlphaMax,
-		Optimize: e.cfg.Optimize,
-	}
-	regions, err := pipeline.TraceRegions(res.Labels, res.NumRegions, b.Dx(), b.Dy(), colors, traceCfg, e.cfg.Workers)
-	if err != nil {
-		return fmt.Errorf("vectrigo: trace: %w", err)
+	// Trace the whole label map as one planar subdivision: adjacent regions share
+	// exact boundary geometry, so filled regions tile the plane gapless — no
+	// background is needed.
+	regions := regiontrace.Trace(res.Labels, res.W, res.H, res.NumRegions, regiontrace.Options{Smooth: photoBoundarySmooth})
+
+	// Per-region pixel area (region id -> pixel count) drives the largest-first
+	// paint order in the assembler.
+	areas := make([]int, res.NumRegions)
+	for _, lb := range res.Labels {
+		if lb >= 0 && lb < res.NumRegions {
+			areas[lb]++
+		}
 	}
 
-	meanBG := meanOpaqueColor(img.NRGBA)
-	if err := assemble.WriteSegmented(w, regions, img, meanBG, assemble.Options{
+	crisp := e.cfg.PhotoEdge == PhotoEdgeCrisp
+	if err := assemble.WriteRegions(w, regions, colors, areas, img, crisp, assemble.Options{
 		Optimize:  e.cfg.Optimize,
 		Precision: e.cfg.Precision,
 	}); err != nil {
 		return fmt.Errorf("vectrigo: assemble: %w", err)
 	}
 	return nil
-}
-
-// meanOpaqueColor returns the mean R,G,B of img's opaque pixels (alpha >= 128,
-// matching segment's opacity threshold), as an opaque colour. It is the full-
-// canvas backdrop that seals sub-pixel seams in photo mode. The computation is
-// deterministic (fixed row-major traversal, integer rounding half-up). An image
-// with no opaque pixels yields opaque black — the backdrop is then cosmetic
-// since there are no regions to seam.
-func meanOpaqueColor(img *image.NRGBA) color.RGBA {
-	pix := img.Pix
-	var sumR, sumG, sumB, cnt uint64
-	for o := 0; o+3 < len(pix); o += 4 {
-		if pix[o+3] < 128 {
-			continue
-		}
-		sumR += uint64(pix[o])
-		sumG += uint64(pix[o+1])
-		sumB += uint64(pix[o+2])
-		cnt++
-	}
-	if cnt == 0 {
-		return color.RGBA{A: 255}
-	}
-	return color.RGBA{
-		R: uint8((sumR + cnt/2) / cnt),
-		G: uint8((sumG + cnt/2) / cnt),
-		B: uint8((sumB + cnt/2) / cnt),
-		A: 255,
-	}
 }

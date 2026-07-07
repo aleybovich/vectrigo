@@ -5,7 +5,7 @@
 //
 //	vectrigo-cli -i <image-path> -s <sensitivity>
 //	vectrigo-cli -i <image-path> --auto-k
-//	vectrigo-cli -i <image-path> --photo [--sigma <n>]
+//	vectrigo-cli -i <image-path> --photo [--sigma <n>] [--edge <crisp|stroke>]
 //
 // The input image is given with --input/-i and is required. It must be a PNG,
 // JPEG, or WEBP raster image.
@@ -23,10 +23,14 @@
 //     which partitions the image into small spatially-connected regions and is
 //     best for photographic content. Its detail dial is --sigma (the bilateral
 //     σ_r "detail" knob, see [vectrigo.Config.PhotoDetail]): ~8 punchy, 12 the
-//     default, 28+ soft. --sigma is only valid together with --photo.
+//     default, 28+ soft. --sigma is only valid together with --photo. Its edge
+//     finish is --edge (see [vectrigo.Config.PhotoEdge]): "crisp" (the default)
+//     disables edge anti-aliasing for a seam-free flat-vector look, "stroke"
+//     keeps anti-aliasing and seals the sub-pixel seams with a thin same-colour
+//     stroke. --edge is only valid together with --photo.
 //
 // Exactly one of --sensitivity, --auto-k, or --photo must be supplied. Passing
-// more than one, or none, is an error; so is --sigma without --photo.
+// more than one, or none, is an error; so is --sigma or --edge without --photo.
 //
 // The resulting SVG is written next to the input file. The output name depends
 // on the mode:
@@ -56,7 +60,7 @@ import (
 const usage = `Usage:
   vectrigo-cli -i <image-path> -s <sensitivity>
   vectrigo-cli -i <image-path> --auto-k
-  vectrigo-cli -i <image-path> --photo [--sigma <n>]
+  vectrigo-cli -i <image-path> --photo [--sigma <n>] [--edge <crisp|stroke>]
 
 Vectorize a raster image (PNG/JPEG/WEBP) into an SVG file.
 
@@ -67,13 +71,18 @@ Options:
       --photo                 Segmentation photo mode, for photographic images.
       --sigma <n>             Photo-mode detail dial (bilateral σ_r): ~8 punchy, 12 default,
                               28+ soft. Only valid with --photo; unset uses the default (12).
+      --edge <crisp|stroke>   Photo-mode edge finish: crisp (default) disables edge
+                              anti-aliasing for a seam-free flat look; stroke keeps
+                              anti-aliasing and seals seams with a thin same-colour stroke.
+                              Only valid with --photo; unset uses the default (crisp).
   -h, --help                  Show this help message.
 
 Modes (mutually exclusive):
   Supply --sensitivity for a fixed quantization detail level (best for flat / logo
   art), OR --auto-k to let the engine choose the colour count K automatically, OR
   --photo for the segmentation pipeline (best for photographic images). Exactly one
-  is required: passing more than one, or none, is an error. --sigma requires --photo.
+  is required: passing more than one, or none, is an error. --sigma and --edge
+  require --photo.
 
 The output SVG is written next to the input file:
   - with a sensitivity, the input's extension is replaced by ".<sensitivity>.svg".
@@ -85,6 +94,7 @@ Examples:
   vectrigo-cli -i photos/street.png --auto-k     =>  photos/street.svg
   vectrigo-cli -i photos/street.png --photo      =>  photos/street.photo.svg
   vectrigo-cli -i photos/street.png --photo --sigma 8  =>  photos/street.photo.svg
+  vectrigo-cli -i photos/street.png --photo --edge stroke  =>  photos/street.photo.svg
 `
 
 // outputPath derives the output SVG path for a given input image path and
@@ -142,6 +152,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		autoK       bool
 		photo       bool
 		sigma       float64
+		edge        string
 		help        bool
 	)
 
@@ -159,6 +170,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// conflating it with any in-band value; an unset --sigma leaves PhotoDetail
 	// at the engine default.
 	fs.Float64Var(&sigma, "sigma", math.NaN(), "photo-mode detail dial (bilateral σ_r)")
+	// Default "" lets us detect whether --edge was supplied; an unset --edge
+	// leaves PhotoEdge at the engine default (crisp).
+	fs.StringVar(&edge, "edge", "", "photo-mode edge finish: crisp (default) or stroke")
 	fs.BoolVar(&help, "help", false, "show this help message")
 	fs.BoolVar(&help, "h", false, "show this help message (shorthand)")
 
@@ -184,12 +198,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// line (both use sentinel defaults, so a value alone can't tell us).
 	sensitivitySet := false
 	sigmaSet := false
+	edgeSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "sensitivity", "s":
 			sensitivitySet = true
 		case "sigma":
 			sigmaSet = true
+		case "edge":
+			edgeSet = true
 		}
 	})
 
@@ -202,6 +219,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if sigmaSet && !photo {
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("--sigma requires --photo")
+	}
+
+	// --edge only tunes photo mode; it is meaningless without --photo.
+	if edgeSet && !photo {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("--edge requires --photo")
 	}
 
 	// Exactly one of the three modes must be selected.
@@ -237,6 +260,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("--sigma must be a finite number")
 	}
 
+	// --edge accepts only the two named finishes.
+	if photo && edgeSet {
+		switch edge {
+		case "crisp", "stroke":
+		default:
+			fmt.Fprint(stderr, usage)
+			return fmt.Errorf("--edge must be \"crisp\" or \"stroke\", got %q", edge)
+		}
+	}
+
 	in, err := os.Open(inputPath)
 	if err != nil {
 		return fmt.Errorf("opening input image: %w", err)
@@ -251,6 +284,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if sigmaSet {
 			cfg.PhotoDetail = sigma
 		}
+		if edgeSet && edge == "stroke" {
+			cfg.PhotoEdge = vectrigo.PhotoEdgeStroke
+		}
+		// crisp (or unset) leaves the DefaultConfig default, PhotoEdgeCrisp.
 		outPath = photoOutputPath(inputPath)
 	case autoK:
 		cfg.AutoK = true

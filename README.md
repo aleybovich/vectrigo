@@ -149,19 +149,21 @@ would add detail with diminishing returns.
   that reflect their complexity — at the cost of coarser output. Push it too high
   and even simple images start losing real colours.
 
-### Photo mode (`Photo` / `PhotoDetail`)
+### Photo mode (`Photo` / `PhotoDetail` / `PhotoEdge`)
 
 The default pipeline **quantizes** colours — it clusters pixels globally by
 colour, which is crisp on flat / logo art and is the right choice there. For
 **photographic** content, `Photo` mode instead **segments** the image into many
 small, spatially-connected regions (Felzenszwalb graph segmentation), each given
-its own mean colour and traced, preserving local detail far better than global
-quantization.
+its own mean colour. The whole label map is then traced as **one planar
+subdivision**, so adjacent regions share their exact boundary geometry and the
+filled regions **tile the plane with no seams** — no background is needed.
 
 ```go
 cfg := vectrigo.DefaultConfig()
-cfg.Photo = true       // segmentation photo pipeline (best for photos)
-cfg.PhotoDetail = 8    // optional σ_r detail dial; 0 keeps the default (12)
+cfg.Photo = true                          // segmentation photo pipeline (best for photos)
+cfg.PhotoDetail = 8                        // optional σ_r detail dial; 0 keeps the default (12)
+cfg.PhotoEdge = vectrigo.PhotoEdgeCrisp    // edge finish; crisp is the default
 ```
 
 - **Off by default.** `Photo` is `false` in both `DefaultConfig()` and the zero
@@ -176,17 +178,25 @@ cfg.PhotoDetail = 8    // optional σ_r detail dial; 0 keeps the default (12)
   `~8` punchy (region count climbs, faces can over-segment), `12` balanced
   (default), `28+` soft / abstract (low-contrast shading and small text blend
   away).
+- **`PhotoEdge` is the anti-aliasing finish** (applies only under `Photo`).
+  `PhotoEdgeCrisp` (the zero value, and `DefaultConfig`'s value) disables edge
+  anti-aliasing via `shape-rendering="crispEdges"` for the crispest, perfectly
+  seam-free flat-vector look. `PhotoEdgeStroke` keeps anti-aliasing and seals the
+  residual sub-pixel seams with a thin same-colour stroke on each region, for
+  slightly softer edges. Any out-of-range value is clamped to crisp.
 
-On the CLI these are `--photo` and `--sigma`:
+On the CLI these are `--photo`, `--sigma` and `--edge`:
 
 ```sh
-vectrigo-cli -i photo.png --photo             # => photo.photo.svg (σ_r = 12)
-vectrigo-cli -i photo.png --photo --sigma 8   # => photo.photo.svg (σ_r = 8)
+vectrigo-cli -i photo.png --photo                    # => photo.photo.svg (σ_r = 12, crisp)
+vectrigo-cli -i photo.png --photo --sigma 8          # => photo.photo.svg (σ_r = 8)
+vectrigo-cli -i photo.png --photo --edge stroke      # => photo.photo.svg (stroked seams)
 ```
 
 `--photo` is the third mutually-exclusive mode alongside `--sensitivity` and
-`--auto-k` — exactly one is required. `--sigma` is only valid with `--photo`,
-and the output is written next to the input with a `.photo.svg` extension.
+`--auto-k` — exactly one is required. `--sigma` and `--edge` are only valid with
+`--photo` (`--edge` takes `crisp` or `stroke`; unset means crisp), and the output
+is written next to the input with a `.photo.svg` extension.
 
 ## License
 

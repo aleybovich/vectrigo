@@ -19,6 +19,13 @@
 //	doc := minisvg.New(100, 100)
 //	doc.Path("M0 0 L100 0 L100 100 L0 100 Z", "#ff0000")
 //
+// A path can also carry a stroke (color + width) alongside its fill via
+// [Document.StrokedPath] / [Group.StrokedPath] — useful for sealing the
+// anti-aliased seams between adjacent region fills. A full-canvas background
+// [Document.SetBackground] emits a <rect> covering the whole document that
+// always renders first, so any residual sub-pixel gap shows a neutral
+// backdrop rather than the white page.
+//
 // # Building path data
 //
 // [PathBuilder] assembles the `d` attribute of a <path> element from a

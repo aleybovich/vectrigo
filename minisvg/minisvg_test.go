@@ -1,6 +1,8 @@
 package minisvg
 
 import (
+	"encoding/xml"
+	"io"
 	"strings"
 	"testing"
 )
@@ -362,5 +364,223 @@ func TestApplyPrecisionNegativeIsNoOp(t *testing.T) {
 	got := applyPrecision("12.345678", "d", -1)
 	if got != "12.345678" {
 		t.Errorf("negative precision should disable rounding, got %q", got)
+	}
+}
+
+func TestStrokedPathExactOutput(t *testing.T) {
+	doc := New(10, 10)
+	doc.StrokedPath("M0 0 L10 0 Z", "#ff0000", "#00ff00", 1.5)
+	got := mustWrite(t, doc)
+	want := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\" viewBox=\"0 0 10 10\">\n" +
+		"  <path d=\"M0 0 L10 0 Z\" fill=\"#ff0000\" stroke=\"#00ff00\" stroke-width=\"1.5\"/>\n" +
+		"</svg>"
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestStrokedPathReturnsDocumentForChaining(t *testing.T) {
+	doc := New(10, 10)
+	if doc.StrokedPath("M0 0 Z", "red", "black", 1) != doc {
+		t.Errorf("StrokedPath did not return the same *Document")
+	}
+}
+
+func TestStrokedPathStrokeOnlyEmitsFillNone(t *testing.T) {
+	doc := New(10, 10)
+	doc.StrokedPath("M0 0 L10 0 Z", "none", "#000", 2)
+	got := mustWrite(t, doc)
+	if !strings.Contains(got, `fill="none"`) {
+		t.Errorf("expected fill=\"none\", got:\n%s", got)
+	}
+	if !strings.Contains(got, `stroke="#000"`) || !strings.Contains(got, `stroke-width="2"`) {
+		t.Errorf("expected stroke attrs, got:\n%s", got)
+	}
+}
+
+func TestStrokedPathEmptyStrokeOmitsStrokeAttrs(t *testing.T) {
+	// With an empty stroke color, output must be byte-identical to Path
+	// (backward-compat: no stroke/stroke-width attributes emitted).
+	stroked := New(10, 10)
+	stroked.StrokedPath("M0 0 L10 0 Z", "#ff0000", "", 3)
+	gotStroked := mustWrite(t, stroked)
+
+	plain := New(10, 10)
+	plain.Path("M0 0 L10 0 Z", "#ff0000")
+	gotPlain := mustWrite(t, plain)
+
+	if gotStroked != gotPlain {
+		t.Errorf("empty-stroke StrokedPath not identical to Path:\nstroked=%q\nplain=%q", gotStroked, gotPlain)
+	}
+	if strings.Contains(gotStroked, "stroke") {
+		t.Errorf("expected no stroke attributes, got:\n%s", gotStroked)
+	}
+}
+
+func TestStrokedPathEmptyFillOmitsFillAttr(t *testing.T) {
+	doc := New(10, 10)
+	doc.StrokedPath("M0 0 Z", "", "#000", 1)
+	got := mustWrite(t, doc)
+	if strings.Contains(got, "fill=") {
+		t.Errorf("expected no fill attribute, got:\n%s", got)
+	}
+	if !strings.Contains(got, `stroke="#000"`) {
+		t.Errorf("expected stroke attribute, got:\n%s", got)
+	}
+}
+
+func TestStrokedPathWidthRoundsUnderPrecision(t *testing.T) {
+	doc := New(10, 10)
+	doc.StrokedPath("M0 0 Z", "none", "#000", 1.23456)
+	got := mustWriteOpts(t, doc, WriteOptions{Minify: true, Precision: 2})
+	if !strings.Contains(got, `stroke-width="1.23"`) {
+		t.Errorf("expected stroke-width rounded to 1.23, got:\n%s", got)
+	}
+}
+
+func TestStrokedPathWidthUnroundedByDefault(t *testing.T) {
+	doc := New(10, 10)
+	doc.StrokedPath("M0 0 Z", "none", "#000", 1.23456)
+	got := mustWrite(t, doc)
+	if !strings.Contains(got, `stroke-width="1.23456"`) {
+		t.Errorf("expected unrounded stroke-width, got:\n%s", got)
+	}
+}
+
+func TestGroupStrokedPath(t *testing.T) {
+	doc := New(10, 10)
+	g := doc.Group("")
+	if g.StrokedPath("M0 0 Z", "red", "blue", 2) != g {
+		t.Errorf("Group.StrokedPath did not return the same *Group")
+	}
+	got := mustWrite(t, doc)
+	if !strings.Contains(got, `<path d="M0 0 Z" fill="red" stroke="blue" stroke-width="2"/>`) {
+		t.Errorf("group stroked path output unexpected, got:\n%s", got)
+	}
+}
+
+func TestSetBackgroundExactOutput(t *testing.T) {
+	doc := New(100, 50)
+	doc.SetBackground("#808080")
+	doc.Path("M0 0 L10 0 Z", "#ff0000")
+	got := mustWrite(t, doc)
+	want := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"50\" viewBox=\"0 0 100 50\">\n" +
+		"  <rect width=\"100\" height=\"50\" fill=\"#808080\"/>\n" +
+		"  <path d=\"M0 0 L10 0 Z\" fill=\"#ff0000\"/>\n" +
+		"</svg>"
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestSetBackgroundRendersFirstEvenWhenSetLast(t *testing.T) {
+	doc := New(20, 20)
+	doc.Path("M0 0 Z", "#111")
+	doc.Group("#222")
+	doc.SetBackground("#eee") // set after content
+	got := mustWrite(t, doc)
+	iRect := strings.Index(got, "<rect")
+	iPath := strings.Index(got, "<path")
+	iGroup := strings.Index(got, "<g ")
+	if iRect < 0 || !(iRect < iPath && iRect < iGroup) {
+		t.Errorf("background rect not rendered first, got:\n%s", got)
+	}
+}
+
+func TestSetBackgroundReplacesNotDuplicates(t *testing.T) {
+	doc := New(10, 10)
+	doc.SetBackground("#111").SetBackground("#222")
+	got := mustWrite(t, doc)
+	if strings.Count(got, "<rect") != 1 {
+		t.Errorf("expected exactly one background rect, got:\n%s", got)
+	}
+	if !strings.Contains(got, `fill="#222"`) || strings.Contains(got, `fill="#111"`) {
+		t.Errorf("expected background replaced with #222, got:\n%s", got)
+	}
+}
+
+func TestSetBackgroundReturnsDocumentForChaining(t *testing.T) {
+	doc := New(10, 10)
+	if doc.SetBackground("#000") != doc {
+		t.Errorf("SetBackground did not return the same *Document")
+	}
+}
+
+func TestSetBackgroundEmptyFillOmitsFillAttr(t *testing.T) {
+	doc := New(10, 10)
+	doc.SetBackground("")
+	got := mustWrite(t, doc)
+	if !strings.Contains(got, `<rect width="10" height="10"/>`) {
+		t.Errorf("expected rect without fill, got:\n%s", got)
+	}
+}
+
+func TestNoBackgroundIsUnchanged(t *testing.T) {
+	doc := New(10, 10)
+	doc.Path("M0 0 L10 0 L10 10 Z", "#ff0000")
+	got := mustWrite(t, doc)
+	if strings.Contains(got, "<rect") {
+		t.Errorf("document without SetBackground should have no rect, got:\n%s", got)
+	}
+}
+
+func TestSetBackgroundMinified(t *testing.T) {
+	doc := New(5, 5)
+	doc.SetBackground("#abc")
+	doc.Path("M0 0 Z", "red")
+	got := mustWriteOpts(t, doc, WriteOptions{Minify: true, Precision: -1})
+	want := `<svg xmlns="http://www.w3.org/2000/svg" width="5" height="5" viewBox="0 0 5 5"><rect width="5" height="5" fill="#abc"/><path d="M0 0 Z" fill="red"/></svg>`
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+func TestStrokedAndBackgroundWellFormedXML(t *testing.T) {
+	doc := New(30, 30)
+	doc.SetBackground("#202020")
+	doc.StrokedPath("M0 0 L30 0 L30 30 Z", "#ff0000", "#ff0000", 0.5)
+	g := doc.Group("")
+	g.StrokedPath("M5 5 L10 5 Z", "none", "#00ff00", 1.25)
+
+	for _, opt := range []WriteOptions{
+		{Minify: false, Precision: -1},
+		{Minify: true, Precision: 2},
+	} {
+		out := mustWriteOpts(t, doc, opt)
+		dec := xml.NewDecoder(strings.NewReader(out))
+		for {
+			_, err := dec.Token()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Errorf("output is not well-formed XML (%+v): %v\n%s", opt, err, out)
+				break
+			}
+		}
+	}
+}
+
+func TestSetBackgroundCoversViewBox(t *testing.T) {
+	// With a custom viewBox larger than the pixel dims, the background rect must
+	// be sized from the viewBox so it fully covers the user-space canvas.
+	var sb strings.Builder
+	New(100, 100).SetViewBox(0, 0, 200, 200).SetBackground("#000").render(&sb, WriteOptions{Precision: -1})
+	out := sb.String()
+	if !strings.Contains(out, `<rect width="200" height="200" fill="#000"`) {
+		t.Fatalf("viewBox background rect not sized from viewBox: %s", out)
+	}
+	// Offset viewBox: x/y must be emitted so the rect covers the offset canvas.
+	sb.Reset()
+	New(100, 100).SetViewBox(-50, -50, 100, 100).SetBackground("#000").render(&sb, WriteOptions{Precision: -1})
+	out = sb.String()
+	if !strings.Contains(out, `<rect x="-50" y="-50" width="100" height="100" fill="#000"`) {
+		t.Fatalf("offset viewBox background rect wrong: %s", out)
+	}
+	// No viewBox: unchanged, sized from pixel dims (byte-compat).
+	sb.Reset()
+	New(100, 100).SetBackground("#000").render(&sb, WriteOptions{Precision: -1})
+	if !strings.Contains(sb.String(), `<rect width="100" height="100" fill="#000"`) {
+		t.Fatalf("default background rect changed: %s", sb.String())
 	}
 }

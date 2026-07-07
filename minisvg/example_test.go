@@ -45,6 +45,21 @@ func ExampleDocument_Group() {
 	// </svg>
 }
 
+// StrokedPath emits a path with both a fill and a same-or-different colored
+// stroke; a full-canvas background is added with SetBackground and always
+// renders first.
+func ExampleDocument_StrokedPath() {
+	doc := minisvg.New(10, 10)
+	doc.SetBackground("#202020")
+	doc.StrokedPath("M0 0 L10 0 L10 10 Z", "#ff0000", "#ff0000", 0.5)
+	doc.WriteTo(os.Stdout)
+	// Output:
+	// <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10">
+	//   <rect width="10" height="10" fill="#202020"/>
+	//   <path d="M0 0 L10 0 L10 10 Z" fill="#ff0000" stroke="#ff0000" stroke-width="0.5"/>
+	// </svg>
+}
+
 // SetViewBox overrides the default "0 0 width height" viewBox.
 func ExampleDocument_SetViewBox() {
 	doc := minisvg.New(100, 100)

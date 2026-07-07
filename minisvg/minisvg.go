@@ -49,6 +49,9 @@ type Document struct {
 	vbW        float64
 	vbH        float64
 
+	bgSet  bool
+	bgFill Color
+
 	children []*node
 }
 
@@ -75,6 +78,22 @@ func (d *Document) SetViewBox(minX, minY, w, h float64) *Document {
 	return d
 }
 
+// SetBackground sets a full-canvas background fill, rendered as a <rect>
+// covering the whole user-space canvas — the viewBox extent when one is set
+// via [Document.SetViewBox], otherwise the pixel dimensions passed to [New] —
+// that is always emitted as the FIRST child, before any path or group,
+// regardless of when SetBackground is called. It returns the Document so
+// calls can be chained.
+//
+// Calling SetBackground again replaces the previous background rather than
+// adding a second one. If fill is "" no fill attribute is written on the
+// rect (see [Color]); pass an explicit color for a visible backdrop.
+func (d *Document) SetBackground(fill Color) *Document {
+	d.bgSet = true
+	d.bgFill = fill
+	return d
+}
+
 // Path appends a <path> element with the given path-data string (typically
 // produced by [PathBuilder]) and fill color to the document's root. It
 // returns the Document so calls can be chained.
@@ -82,6 +101,20 @@ func (d *Document) SetViewBox(minX, minY, w, h float64) *Document {
 // If fill is "" no fill attribute is written at all (see [Color]).
 func (d *Document) Path(data string, fill Color) *Document {
 	d.children = append(d.children, newPathNode(data, fill))
+	return d
+}
+
+// StrokedPath appends a <path> element carrying both a fill and a stroke to
+// the document's root. It returns the Document so calls can be chained.
+//
+// fill follows the usual [Color] convention: "" omits the fill attribute
+// entirely, and "none" forces an explicit fill="none" for a stroke-only
+// path. stroke and strokeWidth are emitted as stroke="..." and
+// stroke-width="..." only when stroke is non-empty; with stroke == "" the
+// output is byte-identical to [Document.Path]. The stroke-width value is
+// rounded like a coordinate under [WriteOptions.Precision].
+func (d *Document) StrokedPath(data string, fill, stroke Color, strokeWidth float64) *Document {
+	d.children = append(d.children, newStrokedPathNode(data, fill, stroke, strokeWidth))
 	return d
 }
 
@@ -113,6 +146,16 @@ func (g *Group) Path(data string, fill Color) *Group {
 	return g
 }
 
+// StrokedPath appends a <path> element carrying both a fill and a stroke
+// inside this group. It returns the Group so calls can be chained. It
+// mirrors [Document.StrokedPath]: fill follows the [Color] convention,
+// stroke/stroke-width are emitted only when stroke is non-empty, and
+// stroke-width is rounded like a coordinate under [WriteOptions.Precision].
+func (g *Group) StrokedPath(data string, fill, stroke Color, strokeWidth float64) *Group {
+	g.n.children = append(g.n.children, newStrokedPathNode(data, fill, stroke, strokeWidth))
+	return g
+}
+
 // Group creates a nested <g> element inside this group and returns a
 // [Group] wrapping it, allowing content to be nested to arbitrary depth.
 //
@@ -128,6 +171,51 @@ func newPathNode(data string, fill Color) *node {
 	n.attrs = append(n.attrs, attr{"d", data})
 	if fill != "" {
 		n.attrs = append(n.attrs, attr{"fill", string(fill)})
+	}
+	return n
+}
+
+// newStrokedPathNode builds a <path> node with a fill (via newPathNode, so
+// the "" / "none" convention is shared) plus stroke and stroke-width
+// attributes when stroke is non-empty. Attribute order is d, fill, stroke,
+// stroke-width.
+func newStrokedPathNode(data string, fill, stroke Color, strokeWidth float64) *node {
+	n := newPathNode(data, fill)
+	if stroke != "" {
+		n.attrs = append(n.attrs,
+			attr{"stroke", string(stroke)},
+			attr{"stroke-width", fmtNum(strokeWidth)},
+		)
+	}
+	return n
+}
+
+// newBackgroundNode builds the full-canvas background <rect>. The rect must
+// cover the user-space canvas, so when a custom viewBox is set it is sized and
+// positioned from that viewBox extent; otherwise it uses the document's pixel
+// dimensions (which, with the default viewBox, are the same coordinate space).
+// The fill attribute is omitted when bgFill is "" (see [Color]).
+func (d *Document) newBackgroundNode() *node {
+	n := &node{tag: "rect"}
+	if d.viewBoxSet {
+		if d.vbMinX != 0 {
+			n.attrs = append(n.attrs, attr{"x", fmtNum(d.vbMinX)})
+		}
+		if d.vbMinY != 0 {
+			n.attrs = append(n.attrs, attr{"y", fmtNum(d.vbMinY)})
+		}
+		n.attrs = append(n.attrs,
+			attr{"width", fmtNum(d.vbW)},
+			attr{"height", fmtNum(d.vbH)},
+		)
+	} else {
+		n.attrs = append(n.attrs,
+			attr{"width", strconv.Itoa(d.width)},
+			attr{"height", strconv.Itoa(d.height)},
+		)
+	}
+	if d.bgFill != "" {
+		n.attrs = append(n.attrs, attr{"fill", string(d.bgFill)})
 	}
 	return n
 }
@@ -193,6 +281,10 @@ func (d *Document) render(sb *strings.Builder, opt WriteOptions) {
 	sb.WriteString("\">")
 	sb.WriteString(nl)
 
+	if d.bgSet {
+		writeNode(sb, d.newBackgroundNode(), 1, indentUnit, nl, opt.Precision)
+	}
+
 	for _, c := range d.children {
 		writeNode(sb, c, 1, indentUnit, nl, opt.Precision)
 	}
@@ -240,14 +332,14 @@ func writeNode(sb *strings.Builder, n *node, depth int, indentUnit, nl string, p
 	sb.WriteString(nl)
 }
 
-// applyPrecision rounds coordinate values found in "d" and "viewBox"
-// attributes to the given precision. It is a no-op for any other attribute
-// name, or when precision is negative.
+// applyPrecision rounds coordinate values found in "d", "viewBox", and
+// "stroke-width" attributes to the given precision. It is a no-op for any
+// other attribute name, or when precision is negative.
 func applyPrecision(value, attrName string, precision int) string {
 	if precision < 0 {
 		return value
 	}
-	if attrName != "d" && attrName != "viewBox" {
+	if attrName != "d" && attrName != "viewBox" && attrName != "stroke-width" {
 		return value
 	}
 	return roundNumbers(value, precision)

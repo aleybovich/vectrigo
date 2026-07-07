@@ -17,6 +17,14 @@ independently without concern.
   overridden.
 - Adds `<path>` elements (`d` + `fill`) and nested `<g>` groups (optionally
   with their own `fill`, inherited by children that don't set their own).
+- Adds **stroked** `<path>` elements (`fill` + `stroke` + `stroke-width`) via
+  `StrokedPath`, supporting fill-only, stroke-only (`fill="none"`), and
+  fill+stroke. The `stroke-width` is rounded like a coordinate under the
+  configured precision.
+- Sets a full-canvas **background** with `SetBackground`, emitted as a
+  `<rect>` covering the whole document that always renders first (handy so
+  any residual sub-pixel seams show a neutral backdrop instead of the white
+  page).
 - Provides a `PathBuilder` that assembles a path's `d` attribute from
   `MoveTo` / `LineTo` / `CubicTo` / `Close` commands, so callers never
   hand-format path-data strings.
@@ -52,8 +60,15 @@ import (
 func main() {
 	doc := minisvg.New(100, 100)
 
+	// A neutral full-canvas background (rendered first, before all content).
+	doc.SetBackground("#202020")
+
 	// A plain filled path.
 	doc.Path("M0 0 L100 0 L100 100 L0 100 Z", "#ff0000")
+
+	// A stroked path: same-color thin stroke seals anti-aliased seams
+	// between adjacent region fills. Use fill "none" for a stroke-only path.
+	doc.StrokedPath("M0 0 L100 0 L100 100 L0 100 Z", "#ff0000", "#ff0000", 0.5)
 
 	// A group of paths sharing a fill.
 	g := doc.Group("blue")

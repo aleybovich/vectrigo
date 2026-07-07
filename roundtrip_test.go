@@ -2,13 +2,12 @@ package vectrigo
 
 import (
 	"bytes"
-	"sort"
 	"testing"
 
 	"image"
 
 	"github.com/aleybovich/bitrace"
-	"github.com/aleybovich/vectrigo/internal/imageutil"
+	"github.com/aleybovich/vectrigo/internal/assemble"
 	"github.com/aleybovich/vectrigo/internal/normalize"
 	"github.com/aleybovich/vectrigo/internal/pipeline"
 	"github.com/aleybovich/vectrigo/internal/quantize"
@@ -49,13 +48,9 @@ func TestRoundTripStreetMarket(t *testing.T) {
 		t.Fatalf("trace: %v", err)
 	}
 
-	// Same z-order as assemble: largest area first, painted first (behind).
-	sort.SliceStable(traced, func(i, j int) bool {
-		if traced[i].Area != traced[j].Area {
-			return traced[i].Area > traced[j].Area
-		}
-		return imageutil.Pack(traced[i].Color) < imageutil.Pack(traced[j].Color)
-	})
+	// Exact same z-order as assemble (containment-aware, area-driven) so the
+	// reconstruction mirrors the emitted document order.
+	traced = assemble.Order(traced)
 
 	canvas := image.NewRGBA(image.Rect(0, 0, W, H))
 	for _, tr := range traced {

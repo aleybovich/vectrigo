@@ -616,21 +616,36 @@ source’s apparent size — the "map back to original coordinate space" from pl
 could be used for both; original-dims is the default so output visually matches
 the input size.)
 
-### 8.2 Z-order (largest behind)
+### 8.2 Z-order (containment-aware, largest behind)
 
-SVG paint order == document order (no z-index). Emit largest-area clusters first
-(bottom) so small foreground shapes are not occluded (plan §8 Stage IV):
+SVG paint order == document order (no z-index). The default is `assemble.Order`:
+emit large-area clusters first (bottom) so small foreground shapes are not
+occluded, **plus** a containment constraint so that any layer *spatially
+enclosed* by another is always painted after (on top of) its encloser — even
+when the enclosed layer has the larger area (e.g. a big foreground object framed
+by a thin surrounding colour, or an inner shape whose hole in the enclosing layer
+was dropped by speckle removal / smoothing so the enclosing layer paints solid
+over it). Pure area ordering paints such an enclosed-but-larger layer first and
+lets the encloser cover it; the containment rule fixes that.
 
-```go
-sort.SliceStable(traced, func(i, j int) bool {
-    if traced[i].Area != traced[j].Area { return traced[i].Area > traced[j].Area } // big first
-    return pack(traced[i].Color) < pack(traced[j].Color)                            // stable tiebreak
-})
-```
+Mechanics (`internal/assemble/containment.go`):
 
-The tie-break on packed color keeps output deterministic when two clusters have
-equal area. (Stage II already applied the same canonical order; re-sorting here
-is cheap and makes `assemble` self-contained/testable in isolation.)
+- Flatten each layer's paths to polygons (cubics subdivided) and compute its
+  bounding box plus a guaranteed-interior point (scanline midpoint under the
+  nonzero fill, so holes read as outside).
+- Layer *A encloses B* iff `bbox(A)` **strictly** contains `bbox(B)` (a fast,
+  antisymmetric pre-filter that keeps the relation a DAG) **and** B's interior
+  point falls inside A's nonzero fill (the decisive spatial test — a shape lying
+  in one of A's *holes* is therefore not enclosed by A).
+- Deterministic Kahn topological sort emits enclosers before enclosed; among
+  layers with no outstanding encloser it always takes the largest area next,
+  tie-broken by packed `0xRRGGBB` then original index.
+
+This is a strict refinement — it only adds constraints where an enclosed layer
+would otherwise be occluded and reproduces the old area/colour order everywhere
+else — so it is the **default**, not an opt-in (no new `Config` field; the public
+API is unchanged). Determinism is preserved: order is a pure function of the
+traced geometry with fixed tiebreaks. `Order` does not mutate its input.
 
 ### 8.3 Holes → one `<path>` per color via nonzero winding
 

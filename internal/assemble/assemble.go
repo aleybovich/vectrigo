@@ -1,11 +1,10 @@
 // Package assemble implements Stage IV of the vectrigo pipeline: order the
-// traced layers by area, merge each colour's contours into a single winding-
-// aware path, and serialize the document with minisvg.
+// traced layers (containment-aware, area-driven), merge each colour's contours
+// into a single winding-aware path, and serialize the document with minisvg.
 package assemble
 
 import (
 	"io"
-	"sort"
 
 	"github.com/aleybovich/bitrace"
 	"github.com/aleybovich/minisvg"
@@ -23,9 +22,10 @@ type Options struct {
 	Precision int
 }
 
-// WriteSVG orders the traced layers (largest area first, so big background
-// shapes render behind small foreground detail), serializes them via minisvg,
-// and streams the document to w.
+// WriteSVG orders the traced layers via [Order] (containment-aware, area-
+// driven: big background shapes render behind small foreground detail, and any
+// layer spatially enclosed by another is painted on top of it so it is never
+// occluded), serializes them via minisvg, and streams the document to w.
 //
 // The <svg> width/height are the image's original dimensions and the viewBox
 // is the working (post-downsample) coordinate space, so a renderer scales the
@@ -44,15 +44,8 @@ func WriteSVG(w io.Writer, traced []pipeline.Traced, img normalize.Image, opt Op
 	doc := minisvg.New(img.OrigW, img.OrigH)
 	doc.SetViewBox(0, 0, float64(workW), float64(workH))
 
-	// Copy before sorting so we do not mutate the caller's slice ordering.
-	order := make([]pipeline.Traced, len(traced))
-	copy(order, traced)
-	sort.SliceStable(order, func(i, j int) bool {
-		if order[i].Area != order[j].Area {
-			return order[i].Area > order[j].Area // largest first (painted first/behind)
-		}
-		return imageutil.Pack(order[i].Color) < imageutil.Pack(order[j].Color)
-	})
+	// Order is containment-aware and does not mutate the caller's slice.
+	order := Order(traced)
 
 	for _, t := range order {
 		if len(t.Paths) == 0 {

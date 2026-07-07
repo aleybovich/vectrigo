@@ -18,9 +18,10 @@
 //     deterministic, seeded k-means and produce one binary mask per colour.
 //  3. Trace — vectorize each mask concurrently with the in-house bitrace
 //     tracer, yielding cubic-Bézier contours.
-//  4. Assemble — order the layers largest-first, merge each colour's contours
-//     into a single winding-aware path, and serialize with the in-house
-//     minisvg writer.
+//  4. Assemble — order the layers containment-aware (largest area behind, but
+//     any layer spatially enclosed by another is painted on top so it is never
+//     occluded), merge each colour's contours into a single winding-aware path,
+//     and serialize with the in-house minisvg writer.
 //
 // # Usage
 //

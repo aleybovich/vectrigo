@@ -113,37 +113,30 @@ func TestAutoOutputPath(t *testing.T) {
 	}
 }
 
-func TestParseSensitivity(t *testing.T) {
+func TestValidateSensitivity(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   string
-		want    int
+		input   int
 		wantErr bool
 	}{
-		{name: "zero", input: "0", want: 0},
-		{name: "hundred", input: "100", want: 100},
-		{name: "typical", input: "70", want: 70},
-		{name: "negative", input: "-1", wantErr: true},
-		{name: "over 100", input: "150", wantErr: true},
-		{name: "non-integer", input: "abc", wantErr: true},
-		{name: "float", input: "50.5", wantErr: true},
-		{name: "empty", input: "", wantErr: true},
+		{name: "zero", input: 0},
+		{name: "hundred", input: 100},
+		{name: "typical", input: 70},
+		{name: "negative", input: -1, wantErr: true},
+		{name: "over 100", input: 150, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseSensitivity(tt.input)
+			err := validateSensitivity(tt.input)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("parseSensitivity(%q) = %d, nil; want error", tt.input, got)
+					t.Fatalf("validateSensitivity(%d) = nil; want error", tt.input)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseSensitivity(%q) unexpected error: %v", tt.input, err)
-			}
-			if got != tt.want {
-				t.Errorf("parseSensitivity(%q) = %d, want %d", tt.input, got, tt.want)
+				t.Fatalf("validateSensitivity(%d) unexpected error: %v", tt.input, err)
 			}
 		})
 	}
@@ -157,7 +150,7 @@ func TestRunEndToEnd(t *testing.T) {
 	copyFile(t, fixturePath, inputPath)
 
 	var stdout, stderr bytes.Buffer
-	err := run([]string{inputPath, "60"}, &stdout, &stderr)
+	err := run([]string{"-i", inputPath, "-s", "60"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("run() returned error: %v (stderr: %s)", err, stderr.String())
 	}
@@ -168,48 +161,27 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", gotOut, wantOut)
 	}
 
-	data, err := os.ReadFile(wantOut)
-	if err != nil {
-		t.Fatalf("output file not created: %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("output SVG file is empty")
-	}
-
-	var root struct {
-		XMLName xml.Name
-	}
-	if err := xml.Unmarshal(data, &root); err != nil {
-		t.Fatalf("output is not well-formed XML: %v", err)
-	}
-	if root.XMLName.Local != "svg" {
-		t.Fatalf("root element = %q, want %q", root.XMLName.Local, "svg")
-	}
+	assertSVG(t, wantOut)
 }
 
 // TestRunAutoKEndToEnd exercises the --auto-k invocation form, verifying it
-// produces an "<name>.svg" output (no sensitivity segment).
+// produces an "<name>.svg" output (no sensitivity segment), with the flag
+// before and after the input flag to confirm order independence.
 func TestRunAutoKEndToEnd(t *testing.T) {
-	for _, args := range [][]string{
-		{"--auto-k", "PLACEHOLDER"}, // flag before path
-		{"PLACEHOLDER", "--auto-k"}, // flag after path
+	for _, form := range []struct {
+		name string
+		args func(input string) []string
+	}{
+		{"auto-k before input", func(in string) []string { return []string{"--auto-k", "-i", in} }},
+		{"auto-k after input", func(in string) []string { return []string{"-i", in, "--auto-k"} }},
 	} {
-		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+		t.Run(form.name, func(t *testing.T) {
 			dir := t.TempDir()
 			inputPath := filepath.Join(dir, "shapes.png")
 			copyFile(t, fixturePath, inputPath)
 
-			// Substitute the placeholder with the real input path.
-			runArgs := make([]string, len(args))
-			for i, a := range args {
-				if a == "PLACEHOLDER" {
-					runArgs[i] = inputPath
-				} else {
-					runArgs[i] = a
-				}
-			}
-
 			var stdout, stderr bytes.Buffer
+			runArgs := form.args(inputPath)
 			if err := run(runArgs, &stdout, &stderr); err != nil {
 				t.Fatalf("run(%v) returned error: %v (stderr: %s)", runArgs, err, stderr.String())
 			}
@@ -220,31 +192,14 @@ func TestRunAutoKEndToEnd(t *testing.T) {
 				t.Fatalf("stdout = %q, want %q", gotOut, wantOut)
 			}
 
-			data, err := os.ReadFile(wantOut)
-			if err != nil {
-				t.Fatalf("output file not created: %v", err)
-			}
-			if len(data) == 0 {
-				t.Fatal("output SVG file is empty")
-			}
-
-			var root struct {
-				XMLName xml.Name
-			}
-			if err := xml.Unmarshal(data, &root); err != nil {
-				t.Fatalf("output is not well-formed XML: %v", err)
-			}
-			if root.XMLName.Local != "svg" {
-				t.Fatalf("root element = %q, want %q", root.XMLName.Local, "svg")
-			}
+			assertSVG(t, wantOut)
 		})
 	}
 }
 
-// TestRunModeMatrix covers each of the four rows of the --auto-k contract,
-// asserting on the returned error (nil vs non-nil, plus the message substring
-// for the two new error rows) and, for the error rows, that no output file is
-// created.
+// TestRunModeMatrix covers every row of the flag-interface contract, asserting
+// on the returned error (nil vs non-nil, plus the message substring for the
+// error rows) and, for the error rows, that no output file is created.
 func TestRunModeMatrix(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -254,28 +209,89 @@ func TestRunModeMatrix(t *testing.T) {
 		wantOut     func(dir string) string // relative to temp dir; success rows only
 	}{
 		{
-			name:    "fixed K with sensitivity",
-			args:    func(in string) []string { return []string{in, "70"} },
-			wantErr: false,
+			name:    "fixed K with short flags",
+			args:    func(in string) []string { return []string{"-i", in, "-s", "70"} },
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.70.svg") },
 		},
 		{
-			name:    "auto-K without sensitivity",
-			args:    func(in string) []string { return []string{"--auto-k", in} },
-			wantErr: false,
+			name:    "fixed K with long flags",
+			args:    func(in string) []string { return []string{"--input", in, "--sensitivity", "70"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.70.svg") },
+		},
+		{
+			name:    "fixed K flag order independence",
+			args:    func(in string) []string { return []string{"-s", "70", "-i", in} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.70.svg") },
+		},
+		{
+			name:    "auto-K with short input flag",
+			args:    func(in string) []string { return []string{"-i", in, "--auto-k"} },
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.svg") },
 		},
 		{
+			name:    "sensitivity zero is valid",
+			args:    func(in string) []string { return []string{"-i", in, "-s", "0"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.0.svg") },
+		},
+		{
 			name:        "no sensitivity and no auto-k",
-			args:        func(in string) []string { return []string{in} },
+			args:        func(in string) []string { return []string{"-i", in} },
 			wantErr:     true,
-			errContains: "sensitivity is required",
+			errContains: "sensitivity (-s) is required",
 		},
 		{
 			name:        "auto-k with sensitivity is mutually exclusive",
-			args:        func(in string) []string { return []string{"--auto-k", in, "70"} },
+			args:        func(in string) []string { return []string{"-i", in, "-s", "70", "--auto-k"} },
 			wantErr:     true,
 			errContains: "mutually exclusive",
+		},
+		{
+			name:        "missing input flag",
+			args:        func(in string) []string { return []string{"-s", "70"} },
+			wantErr:     true,
+			errContains: "input image (-i) is required",
+		},
+		{
+			name:        "sensitivity out of range",
+			args:        func(in string) []string { return []string{"-i", in, "-s", "150"} },
+			wantErr:     true,
+			errContains: "[0,100]",
+		},
+		{
+			name:        "sensitivity negative out of range",
+			args:        func(in string) []string { return []string{"-i", in, "-s", "-5"} },
+			wantErr:     true,
+			errContains: "[0,100]",
+		},
+		{
+			name:        "non-integer sensitivity",
+			args:        func(in string) []string { return []string{"-i", in, "-s", "abc"} },
+			wantErr:     true,
+			errContains: "invalid value",
+		},
+		{
+			name:        "nonexistent input file",
+			args:        func(in string) []string { return []string{"-i", in + ".missing", "-s", "50"} },
+			wantErr:     true,
+			errContains: "opening input image",
+		},
+		{
+			name:        "stray positional argument is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "-s", "70", "garbage"} },
+			wantErr:     true,
+			errContains: "unexpected argument",
+		},
+		{
+			name:        "unknown flag is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "-s", "70", "--bogus"} },
+			wantErr:     true,
+			errContains: "bogus",
+		},
+		{
+			name:        "sensitivity -1 collides with sentinel but is still rejected",
+			args:        func(in string) []string { return []string{"-i", in, "-s", "-1"} },
+			wantErr:     true,
+			errContains: "[0,100]",
 		},
 	}
 
@@ -323,68 +339,6 @@ func TestRunModeMatrix(t *testing.T) {
 	}
 }
 
-// TestRunAutoKNoImage verifies that --auto-k with no image path errors.
-func TestRunAutoKNoImage(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	err := run([]string{"--auto-k"}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("run([--auto-k]) = nil error, want non-nil")
-	}
-	if !strings.Contains(err.Error(), "requires an image path") {
-		t.Fatalf("error %q does not mention missing image path", err.Error())
-	}
-}
-
-func TestRunErrors(t *testing.T) {
-	dir := t.TempDir()
-	inputPath := filepath.Join(dir, "shapes.png")
-	copyFile(t, fixturePath, inputPath)
-
-	tests := []struct {
-		name string
-		args []string
-	}{
-		{
-			name: "wrong number of args - none",
-			args: []string{},
-		},
-		{
-			name: "wrong number of args - one",
-			args: []string{inputPath},
-		},
-		{
-			name: "wrong number of args - three",
-			args: []string{inputPath, "50", "extra"},
-		},
-		{
-			name: "non-integer sensitivity",
-			args: []string{inputPath, "abc"},
-		},
-		{
-			name: "out-of-range sensitivity",
-			args: []string{inputPath, "150"},
-		},
-		{
-			name: "negative sensitivity",
-			args: []string{inputPath, "-5"},
-		},
-		{
-			name: "nonexistent input file",
-			args: []string{filepath.Join(dir, "does-not-exist.png"), "50"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			err := run(tt.args, &stdout, &stderr)
-			if err == nil {
-				t.Fatalf("run(%v) = nil error, want non-nil", tt.args)
-			}
-		})
-	}
-}
-
 func TestRunHelp(t *testing.T) {
 	for _, flag := range []string{"-h", "--help"} {
 		t.Run(flag, func(t *testing.T) {
@@ -394,9 +348,33 @@ func TestRunHelp(t *testing.T) {
 				t.Fatalf("run([]string{%q}) returned error: %v", flag, err)
 			}
 			if !strings.Contains(stdout.String(), "Usage:") {
-				t.Fatalf("help output missing usage text: %q", stdout.String())
+				t.Fatalf("help output missing usage text on stdout: %q", stdout.String())
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("help wrote to stderr: %q", stderr.String())
 			}
 		})
+	}
+}
+
+func assertSVG(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("output file not created: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("output SVG file is empty")
+	}
+
+	var root struct {
+		XMLName xml.Name
+	}
+	if err := xml.Unmarshal(data, &root); err != nil {
+		t.Fatalf("output is not well-formed XML: %v", err)
+	}
+	if root.XMLName.Local != "svg" {
+		t.Fatalf("root element = %q, want %q", root.XMLName.Local, "svg")
 	}
 }
 

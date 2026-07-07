@@ -3,17 +3,22 @@
 //
 // Usage:
 //
-//	vectrigo-cli <image-path> <sensitivity>
-//	vectrigo-cli --auto-k <image-path>
+//	vectrigo-cli -i <image-path> -s <sensitivity>
+//	vectrigo-cli -i <image-path> --auto-k
 //
-// <image-path> is the path to a PNG, JPEG, or WEBP raster image.
-// <sensitivity> is an integer in [0,100] controlling the primary detail knob
-// (see [vectrigo.Config.Sensitivity]); higher values produce more detail.
+// The input image is given with --input/-i and is required. It must be a PNG,
+// JPEG, or WEBP raster image.
 //
-// The two invocation forms are mutually exclusive: supply a sensitivity, or
-// pass --auto-k to let the engine choose the colour count K automatically from
-// the image (see [vectrigo.Config.AutoK]). Passing both, or neither, is an
-// error.
+// The detail level is chosen in one of two mutually exclusive ways:
+//
+//   - --sensitivity/-s takes an integer in [0,100] controlling the primary
+//     detail knob (see [vectrigo.Config.Sensitivity]); higher values produce
+//     more detail.
+//   - --auto-k lets the engine choose the colour count K automatically from the
+//     image (see [vectrigo.Config.AutoK]); no sensitivity is then used.
+//
+// Exactly one of --sensitivity or --auto-k must be supplied. Passing both, or
+// neither, is an error.
 //
 // The resulting SVG is written next to the input file. The output name depends
 // on the mode:
@@ -27,42 +32,40 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/aleybovich/vectrigo"
 )
 
 const usage = `Usage:
-  vectrigo-cli <image-path> <sensitivity>
-  vectrigo-cli --auto-k <image-path>
+  vectrigo-cli -i <image-path> -s <sensitivity>
+  vectrigo-cli -i <image-path> --auto-k
 
 Vectorize a raster image (PNG/JPEG/WEBP) into an SVG file.
 
-Arguments:
-  image-path    Path to the input raster image (PNG, JPEG, or WEBP).
-  sensitivity   Integer in [0,100]; the primary detail knob (higher = more detail).
+Options:
+  -i, --input <path>          Path to the input raster image (PNG, JPEG, or WEBP). Required.
+  -s, --sensitivity <0-100>   Integer detail knob (higher = more detail).
+      --auto-k                Auto-select the colour count K from the image (no sensitivity).
+  -h, --help                  Show this help message.
 
 Modes (mutually exclusive):
-  Supply a sensitivity to use a fixed detail level, OR pass --auto-k to let the
-  engine choose the colour count K automatically from the image (sensitivity is
-  then ignored). Passing both, or neither, is an error.
+  Supply --sensitivity to use a fixed detail level, OR pass --auto-k to let the
+  engine choose the colour count K automatically from the image. Exactly one is
+  required: passing both, or neither, is an error.
 
 The output SVG is written next to the input file:
   - with a sensitivity, the input's extension is replaced by ".<sensitivity>.svg".
   - with --auto-k, the input's extension is replaced by ".svg".
 
 Examples:
-  vectrigo-cli photos/street.png 70   =>  photos/street.70.svg
-  vectrigo-cli --auto-k photos/street.png  =>  photos/street.svg
-
-Options:
-      --auto-k  Auto-select the colour count K from the image (no sensitivity).
-  -h, --help    Show this help message.
+  vectrigo-cli -i photos/street.png -s 70   =>  photos/street.70.svg
+  vectrigo-cli -i photos/street.png --auto-k  =>  photos/street.svg
 `
 
 // outputPath derives the output SVG path for a given input image path and
@@ -87,71 +90,85 @@ func autoOutputPath(inputPath string) string {
 	return filepath.Join(dir, stem+".svg")
 }
 
-// parseSensitivity parses s as an integer sensitivity in [0,100].
-func parseSensitivity(s string) (int, error) {
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, fmt.Errorf("sensitivity must be an integer, got %q", s)
-	}
+// validateSensitivity checks that v is a valid sensitivity in [0,100].
+func validateSensitivity(v int) error {
 	if v < 0 || v > 100 {
-		return 0, fmt.Errorf("sensitivity must be in [0,100], got %d", v)
+		return fmt.Errorf("sensitivity must be in [0,100], got %d", v)
 	}
-	return v, nil
+	return nil
 }
 
 // run implements the CLI: it parses args, runs the vectorization, and reports
 // the outcome via stdout/stderr. It returns a non-nil error on any failure.
 func run(args []string, stdout, stderr io.Writer) error {
-	// Scan for flags in any position (matching how -h/--help is handled),
-	// collecting the remaining positional arguments.
-	autoK := false
-	positional := make([]string, 0, len(args))
-	for _, a := range args {
-		switch a {
-		case "-h", "--help":
-			fmt.Fprint(stdout, usage)
-			return nil
-		case "--auto-k":
-			autoK = true
-		default:
-			positional = append(positional, a)
-		}
-	}
+	fs := flag.NewFlagSet("vectrigo-cli", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	// Print our own usage instead of flag's auto-generated one on error.
+	fs.Usage = func() { fmt.Fprint(stderr, usage) }
 
 	var (
 		inputPath   string
 		sensitivity int
+		autoK       bool
+		help        bool
 	)
 
-	if autoK {
-		// auto-K mode: exactly one positional (the image path); a sensitivity
-		// is not allowed because it is mutually exclusive with --auto-k.
-		switch len(positional) {
-		case 0:
-			fmt.Fprint(stderr, usage)
-			return fmt.Errorf("--auto-k requires an image path")
-		case 1:
-			inputPath = positional[0]
-		default:
-			fmt.Fprint(stderr, usage)
-			return fmt.Errorf("--auto-k and a sensitivity value are mutually exclusive; --auto-k takes only an image path")
+	// Register long and short names for each flag against the same variable,
+	// the standard Go idiom for short/long aliases.
+	fs.StringVar(&inputPath, "input", "", "path to the input raster image (required)")
+	fs.StringVar(&inputPath, "i", "", "path to the input raster image (required) (shorthand)")
+	// Default sensitivity of -1 lets us detect whether the flag was supplied
+	// without conflating it with the valid value 0.
+	fs.IntVar(&sensitivity, "sensitivity", -1, "integer detail knob in [0,100]")
+	fs.IntVar(&sensitivity, "s", -1, "integer detail knob in [0,100] (shorthand)")
+	fs.BoolVar(&autoK, "auto-k", false, "auto-select the colour count K from the image")
+	fs.BoolVar(&help, "help", false, "show this help message")
+	fs.BoolVar(&help, "h", false, "show this help message (shorthand)")
+
+	if err := fs.Parse(args); err != nil {
+		// flag already wrote its error and our usage to stderr.
+		return err
+	}
+
+	if help {
+		fmt.Fprint(stdout, usage)
+		return nil
+	}
+
+	// Reject stray positional arguments rather than silently ignoring them:
+	// flag parsing stops at the first non-flag token, so a trailing typo would
+	// otherwise be discarded (or, if it precedes a flag, swallow that flag).
+	if fs.NArg() > 0 {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("unexpected argument(s): %v (all options are named, e.g. -i <path> -s <n>)", fs.Args())
+	}
+
+	// Whether --sensitivity/-s was actually supplied on the command line.
+	sensitivitySet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "sensitivity" || f.Name == "s" {
+			sensitivitySet = true
 		}
-	} else {
-		// fixed-K mode: image path plus a required sensitivity.
-		switch len(positional) {
-		case 0, 1:
-			fmt.Fprint(stderr, usage)
-			return fmt.Errorf("sensitivity is required unless --auto-k is given")
-		case 2:
-			inputPath = positional[0]
-			s, err := parseSensitivity(positional[1])
-			if err != nil {
-				return err
-			}
-			sensitivity = s
-		default:
-			fmt.Fprint(stderr, usage)
-			return fmt.Errorf("expected 2 arguments, got %d", len(positional))
+	})
+
+	if inputPath == "" {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("an input image (-i) is required")
+	}
+
+	if autoK && sensitivitySet {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("--auto-k and --sensitivity are mutually exclusive")
+	}
+
+	if !autoK && !sensitivitySet {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("a sensitivity (-s) is required unless --auto-k is given")
+	}
+
+	if sensitivitySet {
+		if err := validateSensitivity(sensitivity); err != nil {
+			return err
 		}
 	}
 

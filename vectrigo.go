@@ -105,7 +105,7 @@ func (e *Engine) Convert(r io.Reader, w io.Writer) error {
 // entirely untouched, so Photo=false output is byte-identical to the historical
 // engine. Errors keep the "vectrigo: <stage>:" convention.
 func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
-	// DefaultOptions is the segment library's tuned baseline (K=100, MinSize=4,
+	// DefaultOptions is the segment library's tuned baseline (K=60, MinSize=6,
 	// SpatialSigma=2, BoundarySmooth=3); only the range-sigma detail dial is
 	// exposed to callers, via PhotoDetail (already normalized/clamped).
 	opt := segment.DefaultOptions()

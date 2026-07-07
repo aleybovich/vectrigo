@@ -11,9 +11,10 @@ package segment
 // introduce — a region shrinking away, or a region splitting into two blobs —
 // are handled explicitly here:
 //
-//   - Shrinking away: small regions are FROZEN (see freeze floor below) so they
-//     are preserved bit-for-bit, and a region large enough to have any interior
-//     pixel can never vanish because interior pixels never flip.
+//   - Shrinking away: small regions and THIN regions (mostly-boundary strokes,
+//     see the freeze rules below) are FROZEN so they are preserved bit-for-bit,
+//     and a region large enough to have any interior pixel can never vanish
+//     because interior pixels never flip.
 //   - Splitting: after smoothing the labels are re-densified by 8-connected
 //     component (relabelConnected), so a split region simply becomes two valid,
 //     each-connected regions rather than one disconnected id.
@@ -21,16 +22,10 @@ package segment
 // Guarantee summary. After smoothing + relabelConnected: every opaque pixel has
 // exactly one dense label in [0,NumRegions); no gaps or overlaps; every region
 // is a single 8-connected component; and every region present before smoothing
-// whose area is <= the freeze floor is present afterwards with its exact pixels.
-// Determinism: passes are double-buffered pure functions of the previous buffer
-// with a lowest-label-id tie-break, and relabelConnected numbers components in
-// row-major first-appearance order.
-//
-// Documented limit: a region above the freeze floor that is everywhere thin
-// (has no interior pixel — e.g. a 1px-wide stroke longer than the floor) can
-// still erode under many iterations. Two-pixel-wide strokes are preserved
-// naturally (their pixels keep a same-label majority), and the recommended
-// iteration count is small (1-5), so this is not a concern in practice.
+// that is frozen (small by area, or thin) is present afterwards with its exact
+// pixels. Determinism: passes are double-buffered pure functions of the
+// previous buffer with a lowest-label-id tie-break, and relabelConnected
+// numbers components in row-major first-appearance order.
 
 // defaultSmoothProtect is the minimum region-area floor honoured by boundary
 // smoothing even when Options.MinSize is unset. Any region whose area is at or
@@ -40,6 +35,17 @@ package segment
 // being dissolved by the mode filter. It is deliberately generous enough to
 // cover tiny glyph blobs while staying well below any genuinely large region.
 const defaultSmoothProtect = 16
+
+// thinInteriorRatio is the thinness freeze rule: a region is frozen when its
+// interior pixel count (pixels whose full 8-neighbourhood shares their label)
+// is under 1/thinInteriorRatio of its area. Such a region is essentially all
+// boundary — a 1-2px letter stroke, a feature line, a wire — exactly the
+// features the mode filter otherwise erodes because every pixel is outvoted by
+// the surrounding region. Area alone cannot catch these: a letter is well above
+// any sane area floor yet still thin everywhere. Blobby regions are unaffected
+// (a disc's interior is well over a quarter of its area at any size the filter
+// could plausibly damage).
+const thinInteriorRatio = 4
 
 // smoothBoundaries runs iters passes of a deterministic 8-connected label-map
 // mode filter over labels in place, rounding off staircase jaggies on region
@@ -61,18 +67,34 @@ func smoothBoundaries(labels []int, w, h, numRegions, minSize, iters int) {
 		protect = defaultSmoothProtect
 	}
 
-	// Freeze small regions. Areas are taken from the initial labelling; frozen
-	// regions are inert (neither lose nor gain pixels), so their area never
-	// changes and a static freeze set is sufficient and deterministic.
+	// Freeze small regions (by area) and thin regions (by interior/area ratio).
+	// Areas and interiors are taken from the initial labelling; frozen regions
+	// are inert (neither lose nor gain pixels), so their geometry never changes
+	// and a static freeze set is sufficient and deterministic.
 	area := make([]int, numRegions)
 	for _, lb := range labels {
 		if lb >= 0 {
 			area[lb]++
 		}
 	}
+	interior := make([]int, numRegions)
+	for y := 1; y < h-1; y++ {
+		for x := 1; x < w-1; x++ {
+			i := y*w + x
+			lb := labels[i]
+			if lb < 0 {
+				continue
+			}
+			if labels[i-1] == lb && labels[i+1] == lb &&
+				labels[i-w-1] == lb && labels[i-w] == lb && labels[i-w+1] == lb &&
+				labels[i+w-1] == lb && labels[i+w] == lb && labels[i+w+1] == lb {
+				interior[lb]++
+			}
+		}
+	}
 	frozen := make([]bool, numRegions)
 	for id, a := range area {
-		if a <= protect {
+		if a <= protect || interior[id]*thinInteriorRatio < a {
 			frozen[id] = true
 		}
 	}

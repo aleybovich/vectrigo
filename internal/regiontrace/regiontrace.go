@@ -72,6 +72,17 @@ type edge struct {
 	sx, sy, ex, ey int
 }
 
+// tinyRegionPinEdges is the boundary-edge count at or below which a region's
+// corners are pinned during smoothing. Laplacian smoothing shrinks a closed
+// loop toward its centroid, and the smaller the loop the more of it is lost: a
+// single-pixel region (4 edges) collapses to an eighth of its size after three
+// iterations, turning eye highlights and glyph fragments into near-invisible
+// specks. 12 edges corresponds to roughly a 3×3-pixel region — big enough that
+// shrinkage stops being destructive. Pinning is per-corner and the corner map
+// is shared, so a neighbour containing a pinned tiny region keeps the identical
+// (unsmoothed) hole geometry and the tiling stays exact.
+const tinyRegionPinEdges = 12
+
 // Trace turns a per-pixel label map into per-region boundary loops that tile
 // the plane exactly. labels has length w*h, row-major (index = y*w + x); each
 // entry is a region id in [0,numRegions) or a negative sentinel for a
@@ -148,14 +159,17 @@ func boundaryEdges(labels []int, w, h, numRegions int) [][]edge {
 // corner index, valued by the (optionally smoothed) float Point. Every corner
 // that appears on any region boundary is present. Laplacian smoothing runs over
 // the undirected crack graph (neighbours = corners reachable via one boundary
-// unit-edge), pinning corners whose crack degree != 2 (junctions) and corners
-// on the image border. Because the same map is returned for all regions, any
-// two regions sharing a corner read the identical Point.
+// unit-edge), pinning corners whose crack degree != 2 (junctions), corners on
+// the image border, and every corner of a tiny region (see
+// tinyRegionPinEdges), which Laplacian shrinkage would otherwise collapse to a
+// speck. Because the same map is returned for all regions, any two regions
+// sharing a corner read the identical Point.
 func smoothedCorners(regionEdges [][]edge, w, h, iters int) map[int]Point {
 	// Intern boundary corners to dense ids and build undirected adjacency.
 	dense := make(map[int]int)
 	var xs, ys []int
 	var adj [][]int
+	var tiny []bool
 	getDense := func(x, y int) int {
 		ci := cornerIdx(x, y, w)
 		if d, ok := dense[ci]; ok {
@@ -166,6 +180,7 @@ func smoothedCorners(regionEdges [][]edge, w, h, iters int) map[int]Point {
 		xs = append(xs, x)
 		ys = append(ys, y)
 		adj = append(adj, nil)
+		tiny = append(tiny, false)
 		return d
 	}
 	addNbr := func(a, b int) {
@@ -177,11 +192,16 @@ func smoothedCorners(regionEdges [][]edge, w, h, iters int) map[int]Point {
 		adj[a] = append(adj[a], b)
 	}
 	for _, edges := range regionEdges {
+		isTiny := len(edges) > 0 && len(edges) <= tinyRegionPinEdges
 		for _, e := range edges {
 			a := getDense(e.sx, e.sy)
 			b := getDense(e.ex, e.ey)
 			addNbr(a, b)
 			addNbr(b, a)
+			if isTiny {
+				tiny[a] = true
+				tiny[b] = true
+			}
 		}
 	}
 
@@ -190,7 +210,7 @@ func smoothedCorners(regionEdges [][]edge, w, h, iters int) map[int]Point {
 	pinned := make([]bool, n)
 	for i := 0; i < n; i++ {
 		pos[i] = Point{X: float64(xs[i]), Y: float64(ys[i])}
-		if len(adj[i]) != 2 || xs[i] == 0 || xs[i] == w || ys[i] == 0 || ys[i] == h {
+		if len(adj[i]) != 2 || tiny[i] || xs[i] == 0 || xs[i] == w || ys[i] == 0 || ys[i] == h {
 			pinned[i] = true
 		}
 	}

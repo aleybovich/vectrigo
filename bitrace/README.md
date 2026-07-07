@@ -1,6 +1,6 @@
 # bitrace
 
-`bitrace` is a pure-Go, permissively-licensed **bitmap-to-vector tracer**. It
+`bitrace` is a pure-Go **bitmap-to-vector tracer**. It
 converts a binary bitmap (a mask of on/off pixels) into smooth vector paths made
 of straight lines and **cubic Bézier curves**, in the spirit of tools like
 Potrace but implemented independently.
@@ -95,9 +95,13 @@ transpiled out of Potrace (which is GPL-2.0) or any Potrace port. It was built
 solely from general, public-domain algorithm descriptions (border following,
 the shoelace area formula, curvature-based corner detection) together with the
 permissively-licensed `honnef.co/go/curve` package for cubic Bézier fitting.
-This keeps bitrace free of copyleft obligations so it can be embedded in
-proprietary software.
+This keeps bitrace free of any third-party copyleft obligations, leaving its own
+license terms entirely the author's to set (see [License](#license)).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+bitrace is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE):
+**free for any noncommercial use**; commercial use requires a separate commercial
+license from the copyright holder, Andrey Leybovich. Its one third-party
+dependency (`honnef.co/go/curve`, Apache-2.0) and transitive components are
+reproduced in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

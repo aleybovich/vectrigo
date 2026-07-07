@@ -26,8 +26,9 @@ Every dependency — direct or transitive — carries a **permissive** license. 
 allow-list is: MIT, BSD-2-Clause / BSD-3-Clause, Apache-2.0, ISC, zlib, and
 Unlicense / public-domain code dedications. Copyleft licenses (GPL / LGPL / AGPL,
 any version) and non-software licenses (e.g. Creative Commons such as CC-BY-4.0)
-are **forbidden**. Vectrigo targets commercial / closed-source use, so the whole
-dependency graph stays permissive and free of legal friction.
+are **forbidden**. Keeping the whole dependency graph permissive means Vectrigo
+is free to set its own license terms (see [License](#license)) without inheriting
+any copyleft obligations.
 
 ### Stateless engine, streaming I/O
 
@@ -100,7 +101,15 @@ Start from `DefaultConfig()` and adjust from there. A bare `Config{}` means
 
 ## License
 
-Vectrigo is released under the [MIT License](LICENSE) — a permissive license
-compatible with its permissive dependency graph. It bundles two in-house,
-independently-licensed libraries, `bitrace` and `minisvg` (both MIT), which carry
-their own `LICENSE` files.
+Vectrigo — the engine and the `vectrigo-cli` command — is licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). **It is free for any
+noncommercial use.** Commercial use is not granted by that license and requires a
+separate commercial license from the copyright holder — contact Andrey Leybovich.
+
+This split is possible precisely because every dependency is permissively
+licensed, which lets Vectrigo set its own terms. Third-party components and their
+licenses are reproduced in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+It bundles two in-house libraries, each independently licensed with its own
+`LICENSE` file: [`bitrace`](bitrace/) (PolyForm Noncommercial 1.0.0) and
+[`minisvg`](minisvg/) (MIT).

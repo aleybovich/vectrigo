@@ -203,11 +203,11 @@ func TestPhotoModeDegenerate(t *testing.T) {
 	}
 }
 
-// TestPhotoSimplifyKnob verifies the PhotoSimplify dial is wired end-to-end:
-// off (negative) must emit strictly more path data than the derived default,
-// and a coarser explicit tolerance strictly less. Off must also match the
-// exact pre-simplification geometry (Optimize still rounds coordinates, so we
-// compare against a run with the same Optimize settings).
+// TestPhotoSimplifyKnob verifies the opt-in PhotoSimplify dial is wired
+// end-to-end: the default (0) means OFF — maximum fidelity — and must emit
+// strictly more path data than the subtle preset, which must emit strictly
+// more than the aggressive preset. Negative (another spelling of off) must
+// match the default byte-for-byte.
 func TestPhotoSimplifyKnob(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping heavy photo integration test in -short")
@@ -226,15 +226,15 @@ func TestPhotoSimplifyKnob(t *testing.T) {
 		return buf.Bytes()
 	}
 
-	off := render(-1)      // force off: maximum fidelity
-	def := render(0)       // derive: 0.35 under Optimize
-	coarse := render(1.5)  // explicit coarse tolerance
+	off := render(0) // the default: simplification off
+	subtle := render(PhotoSimplifySubtle)
+	aggressive := render(PhotoSimplifyAggressive)
 
-	if !(len(off) > len(def) && len(def) > len(coarse)) {
-		t.Fatalf("PhotoSimplify not monotone: off=%d default=%d coarse=%d bytes", len(off), len(def), len(coarse))
+	if !(len(off) > len(subtle) && len(subtle) > len(aggressive)) {
+		t.Fatalf("PhotoSimplify not monotone: off=%d subtle=%d aggressive=%d bytes", len(off), len(subtle), len(aggressive))
 	}
-	// The derived default must equal an explicit 0.35 exactly.
-	if !bytes.Equal(def, render(0.35)) {
-		t.Fatal("derived default differs from explicit PhotoSimplify=0.35")
+	// Negative is just another spelling of off.
+	if !bytes.Equal(off, render(-1)) {
+		t.Fatal("negative PhotoSimplify differs from the off default")
 	}
 }

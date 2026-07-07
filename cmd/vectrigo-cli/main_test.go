@@ -293,13 +293,13 @@ func TestRunModeMatrix(t *testing.T) {
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
 		},
 		{
-			name:    "photo mode with simplify tolerance",
-			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "0.5"} },
+			name:    "photo mode with simplify subtle",
+			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "subtle"} },
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
 		},
 		{
-			name:    "photo mode with simplify off",
-			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "0"} },
+			name:    "photo mode with simplify aggressive",
+			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "aggressive"} },
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
 		},
 		{
@@ -350,15 +350,21 @@ func TestRunModeMatrix(t *testing.T) {
 		},
 		{
 			name:        "simplify without photo is rejected",
-			args:        func(in string) []string { return []string{"-i", in, "--simplify", "0.5"} },
+			args:        func(in string) []string { return []string{"-i", in, "--simplify", "subtle"} },
 			wantErr:     true,
 			errContains: "--simplify requires --photo",
 		},
 		{
-			name:        "negative simplify is rejected",
-			args:        func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "-1"} },
+			name:        "unknown simplify strength is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "medium"} },
 			wantErr:     true,
-			errContains: "--simplify must be 0 (off) or a positive tolerance",
+			errContains: "--simplify must be \"subtle\" or \"aggressive\"",
+		},
+		{
+			name:        "numeric simplify is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "0.35"} },
+			wantErr:     true,
+			errContains: "--simplify must be \"subtle\" or \"aggressive\"",
 		},
 		{
 			name:        "edge with bogus value is rejected",

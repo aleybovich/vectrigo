@@ -29,16 +29,25 @@ const (
 	minPhotoDetail = 4
 	maxPhotoDetail = 60
 
-	// defaultPhotoSimplify is the boundary-simplification tolerance used for
-	// photo mode when [Config.PhotoSimplify] is unset (0) and [Config.Optimize]
-	// is on: ~1/3 px is visually near-lossless at crispEdges rendering while
-	// collapsing the nearly collinear corner runs that smoothing leaves on
-	// straight edges. See [Config.PhotoSimplify].
-	defaultPhotoSimplify = 0.35
-
 	// maxPhotoSimplify is the upper clamp for [Config.PhotoSimplify]. Beyond a
 	// few pixels of tolerated deviation, region shapes visibly distort.
 	maxPhotoSimplify = 5.0
+)
+
+// Recommended presets for [Config.PhotoSimplify], the photo-mode boundary
+// simplification tolerance. Simplification is OFF by default (PhotoSimplify
+// 0); these are the two tuned opt-in strengths, exposed by the CLI as
+// --simplify subtle|aggressive.
+const (
+	// PhotoSimplifySubtle (~1/3 px) is visually near-lossless at crispEdges
+	// rendering while collapsing the nearly collinear corner runs that
+	// smoothing leaves on straight edges (roughly 3x fewer nodes / smaller
+	// files on typical content).
+	PhotoSimplifySubtle = 0.35
+
+	// PhotoSimplifyAggressive (1 px) trades visible geometric coarsening for
+	// the smallest files (roughly 5x fewer nodes on typical content).
+	PhotoSimplifyAggressive = 1.0
 )
 
 // Dimensions is a width/height pair in pixels.
@@ -193,25 +202,21 @@ type Config struct {
 	// deviation allowed when straightening region-boundary corner runs. It has
 	// NO effect when Photo is false.
 	//
-	// It trades node count / file size against geometric fidelity. Smoothing
-	// leaves straight edges as long runs of NEARLY collinear points, so with
-	// simplification off every boundary pixel of a straight edge becomes an
-	// output node; a sub-pixel tolerance collapses those runs while leaving
-	// curves intact. Simplification is applied ONCE on the shared boundary
-	// graph, so the two regions flanking any edge always simplify identically
-	// and the gapless tiling is preserved at every setting.
+	// Simplification is strictly OPT-IN: the zero value (a bare Config{}, and
+	// DefaultConfig's value) — and any value <= 0 or NaN — means OFF, the
+	// maximum-fidelity geometry in which every boundary corner is kept. That
+	// costs many nodes on straight edges: smoothing leaves them as long runs
+	// of NEARLY collinear points, so each boundary pixel becomes an output
+	// node.
 	//
-	// The value follows the TurdSize sign convention, because 0 must mean
-	// "unset" while "off" is also a meaningful setting:
-	//   - 0 (a bare Config{}, and DefaultConfig's value): derive — 0.35 when
-	//     [Config.Optimize] is on (simplification is lossy, so it rides the
-	//     Optimize switch like coordinate rounding), off when Optimize is off.
-	//   - negative: force OFF — every boundary corner is kept, the maximum-
-	//     fidelity historical geometry, at the cost of many nodes on straight
-	//     edges.
-	//   - positive: used as-is (clamped to 5.0). ~0.2-0.35 is visually
-	//     near-lossless; ~0.75-1.5 trades visible geometric coarsening for
-	//     much smaller files.
+	// A positive value enables simplification at that tolerance (clamped to
+	// 5.0), collapsing those runs while leaving curves intact. Use the tuned
+	// presets [PhotoSimplifySubtle] (0.35, visually near-lossless) and
+	// [PhotoSimplifyAggressive] (1.0, smallest files, visibly coarser shapes)
+	// unless you have a reason to pick your own number. Simplification is
+	// applied ONCE on the shared boundary graph, so the two regions flanking
+	// any edge always simplify identically and the gapless tiling is preserved
+	// at every setting.
 	PhotoSimplify float64
 
 	// PhotoEdge selects the anti-aliasing finish for photo mode (see
@@ -298,10 +303,10 @@ func (c Config) normalized() Config {
 	}
 	c.PhotoDetail = clampFloat(c.PhotoDetail, minPhotoDetail, maxPhotoDetail)
 
-	// PhotoSimplify: NaN folds to 0 (derive); a positive value is clamped to
-	// the sane maximum; a negative value is preserved as the force-off
-	// sentinel (mirroring TurdSize). Inert when Photo is false.
-	if math.IsNaN(c.PhotoSimplify) {
+	// PhotoSimplify: <= 0 and NaN all mean OFF; fold them to a canonical 0.
+	// A positive value is clamped to the sane maximum. Inert when Photo is
+	// false.
+	if math.IsNaN(c.PhotoSimplify) || c.PhotoSimplify < 0 {
 		c.PhotoSimplify = 0
 	} else if c.PhotoSimplify > maxPhotoSimplify {
 		c.PhotoSimplify = maxPhotoSimplify

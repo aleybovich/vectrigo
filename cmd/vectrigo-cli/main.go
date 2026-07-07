@@ -5,7 +5,7 @@
 //
 //	vectrigo-cli -i <image-path> -s <sensitivity>
 //	vectrigo-cli -i <image-path> --auto-k
-//	vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <n>] [--edge <crisp|stroke>]
+//	vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <subtle|aggressive>] [--edge <crisp|stroke>]
 //
 // The input image is given with --input/-i and is required. It must be a PNG,
 // JPEG, or WEBP raster image.
@@ -25,12 +25,13 @@
 //     σ_r "detail" knob, see [vectrigo.Config.PhotoDetail]): ~8 punchy, 12 the
 //     default, 28+ soft. --sigma is only valid together with --photo. Its
 //     node-count/fidelity dial is --simplify (see
-//     [vectrigo.Config.PhotoSimplify]): the boundary-simplification tolerance
-//     in pixels — 0 turns simplification OFF (maximum fidelity, every boundary
-//     corner kept, at the cost of many nodes on straight edges), ~0.35 (the
-//     default when unset) is visually near-lossless, larger values trade
-//     geometric fidelity for smaller files. --simplify is only valid together
-//     with --photo. Its edge finish is --edge (see [vectrigo.Config.PhotoEdge]):
+//     [vectrigo.Config.PhotoSimplify]), an OPT-IN boundary simplification:
+//     unset means OFF — maximum fidelity, every boundary corner kept, at the
+//     cost of many nodes on straight edges. "subtle" (0.35px tolerance) is
+//     visually near-lossless while collapsing straight-edge node runs;
+//     "aggressive" (1px) produces the smallest files at visibly coarser
+//     shapes. Seams never open at any setting. --simplify is only valid
+//     together with --photo. Its edge finish is --edge (see [vectrigo.Config.PhotoEdge]):
 //     "crisp" (the default) disables edge anti-aliasing for a seam-free
 //     flat-vector look, "stroke" keeps anti-aliasing and seals the sub-pixel
 //     seams with a thin same-colour stroke. --edge is only valid together with
@@ -68,7 +69,7 @@ import (
 const usage = `Usage:
   vectrigo-cli -i <image-path> -s <sensitivity>
   vectrigo-cli -i <image-path> --auto-k
-  vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <n>] [--edge <crisp|stroke>]
+  vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <subtle|aggressive>] [--edge <crisp|stroke>]
 
 Vectorize a raster image (PNG/JPEG/WEBP) into an SVG file.
 
@@ -79,10 +80,10 @@ Options:
       --photo                 Segmentation photo mode, for photographic images.
       --sigma <n>             Photo-mode detail dial (bilateral σ_r): ~8 punchy, 12 default,
                               28+ soft. Only valid with --photo; unset uses the default (12).
-      --simplify <n>          Photo-mode boundary simplification tolerance in pixels:
-                              0 = OFF (maximum fidelity, most nodes), 0.35 = default
-                              (visually near-lossless, far fewer nodes on straight edges),
-                              larger = smaller files but coarser shapes. Seams never open
+      --simplify <strength>   Photo-mode boundary simplification (opt-in; unset = OFF,
+                              maximum fidelity). "subtle" is visually near-lossless with
+                              far fewer nodes on straight edges; "aggressive" gives the
+                              smallest files at visibly coarser shapes. Seams never open
                               at any setting. Only valid with --photo.
       --edge <crisp|stroke>   Photo-mode edge finish: crisp (default) disables edge
                               anti-aliasing for a seam-free flat look; stroke keeps
@@ -107,7 +108,7 @@ Examples:
   vectrigo-cli -i photos/street.png --auto-k     =>  photos/street.svg
   vectrigo-cli -i photos/street.png --photo      =>  photos/street.photo.svg
   vectrigo-cli -i photos/street.png --photo --sigma 8  =>  photos/street.photo.svg
-  vectrigo-cli -i photos/street.png --photo --simplify 0  =>  photos/street.photo.svg
+  vectrigo-cli -i photos/street.png --photo --simplify subtle  =>  photos/street.photo.svg
   vectrigo-cli -i photos/street.png --photo --edge stroke  =>  photos/street.photo.svg
 `
 
@@ -166,7 +167,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		autoK       bool
 		photo       bool
 		sigma       float64
-		simplify    float64
+		simplify    string
 		edge        string
 		help        bool
 	)
@@ -185,9 +186,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// conflating it with any in-band value; an unset --sigma leaves PhotoDetail
 	// at the engine default.
 	fs.Float64Var(&sigma, "sigma", math.NaN(), "photo-mode detail dial (bilateral σ_r)")
-	// Default of NaN lets us detect whether --simplify was supplied; an unset
-	// --simplify leaves PhotoSimplify at the engine default (0.35px).
-	fs.Float64Var(&simplify, "simplify", math.NaN(), "photo-mode boundary simplification tolerance in px (0 = off)")
+	// Default "" lets us detect whether --simplify was supplied; an unset
+	// --simplify leaves PhotoSimplify at the engine default: OFF.
+	fs.StringVar(&simplify, "simplify", "", "photo-mode boundary simplification: subtle or aggressive (unset = off)")
 	// Default "" lets us detect whether --edge was supplied; an unset --edge
 	// leaves PhotoEdge at the engine default (crisp).
 	fs.StringVar(&edge, "edge", "", "photo-mode edge finish: crisp (default) or stroke")
@@ -287,13 +288,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("--sigma must be a finite number")
 	}
 
-	// --simplify: 0 means OFF (maximum fidelity), a positive value is the
-	// tolerance in pixels (the engine clamps extremes). Negative or non-finite
-	// values are user errors — the CLI keeps the intuitive 0 = off surface and
-	// maps it to the library's sign convention below.
-	if photo && simplifySet && (math.IsNaN(simplify) || math.IsInf(simplify, 0) || simplify < 0) {
-		fmt.Fprint(stderr, usage)
-		return fmt.Errorf("--simplify must be 0 (off) or a positive tolerance in pixels")
+	// --simplify accepts only the two named strengths; leaving it unset means
+	// no simplification at all.
+	if photo && simplifySet {
+		switch simplify {
+		case "subtle", "aggressive":
+		default:
+			fmt.Fprint(stderr, usage)
+			return fmt.Errorf("--simplify must be \"subtle\" or \"aggressive\", got %q", simplify)
+		}
 	}
 
 	// --edge accepts only the two named finishes.
@@ -320,13 +323,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 		if sigmaSet {
 			cfg.PhotoDetail = sigma
 		}
-		if simplifySet {
-			if simplify == 0 {
-				cfg.PhotoSimplify = -1 // CLI 0 = off; the library's off sentinel is negative
-			} else {
-				cfg.PhotoSimplify = simplify
-			}
+		switch simplify {
+		case "subtle":
+			cfg.PhotoSimplify = vectrigo.PhotoSimplifySubtle
+		case "aggressive":
+			cfg.PhotoSimplify = vectrigo.PhotoSimplifyAggressive
 		}
+		// unset leaves the DefaultConfig default: simplification off.
 		if edgeSet && edge == "stroke" {
 			cfg.PhotoEdge = vectrigo.PhotoEdgeStroke
 		}

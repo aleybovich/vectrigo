@@ -117,18 +117,10 @@ func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
 
 	// Trace the whole label map as one planar subdivision: adjacent regions share
 	// exact boundary geometry, so filled regions tile the plane gapless — no
-	// background is needed. Boundary simplification is the node-count/fidelity
-	// dial [Config.PhotoSimplify]: an explicit positive tolerance is used as-is,
-	// a negative one forces it off, and the unset default derives 0.35px under
-	// Optimize (simplification is lossy, so the derived default rides the
-	// Optimize switch like coordinate rounding) and off otherwise.
-	traceOpt := regiontrace.Options{Smooth: photoBoundarySmooth}
-	switch {
-	case e.cfg.PhotoSimplify > 0:
-		traceOpt.Simplify = e.cfg.PhotoSimplify
-	case e.cfg.PhotoSimplify == 0 && e.cfg.Optimize:
-		traceOpt.Simplify = defaultPhotoSimplify
-	}
+	// background is needed. Boundary simplification is the OPT-IN
+	// node-count/fidelity dial [Config.PhotoSimplify]: 0 (the default) keeps
+	// every corner; a positive tolerance collapses near-collinear runs.
+	traceOpt := regiontrace.Options{Smooth: photoBoundarySmooth, Simplify: e.cfg.PhotoSimplify}
 	regions := regiontrace.Trace(res.Labels, res.W, res.H, res.NumRegions, traceOpt)
 
 	// Per-region pixel area (region id -> pixel count) drives the largest-first

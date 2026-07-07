@@ -219,25 +219,27 @@ func TestKClampBounds(t *testing.T) {
 }
 
 func TestPhotoSimplifyNormalization(t *testing.T) {
-	// DefaultConfig and a bare Config{} both mean "derive": 0 survives
-	// normalization (resolution to 0.35-under-Optimize happens in the engine).
+	// Simplification is opt-in: DefaultConfig and a bare Config{} both mean
+	// OFF, and normalization folds every "off" spelling (<= 0, NaN) to 0.
 	if got := DefaultConfig().PhotoSimplify; got != 0 {
-		t.Errorf("DefaultConfig().PhotoSimplify = %v, want 0 (derive)", got)
+		t.Errorf("DefaultConfig().PhotoSimplify = %v, want 0 (off)", got)
 	}
 	if got := (Config{}).normalized().PhotoSimplify; got != 0 {
-		t.Errorf("bare Config{} PhotoSimplify = %v, want 0 (derive)", got)
+		t.Errorf("bare Config{} PhotoSimplify = %v, want 0 (off)", got)
 	}
-	// NaN folds to derive.
+	// NaN and negative are just other spellings of off; both fold to 0.
 	if got := (Config{PhotoSimplify: math.NaN()}).normalized().PhotoSimplify; got != 0 {
-		t.Errorf("NaN PhotoSimplify => %v, want 0 (derive)", got)
+		t.Errorf("NaN PhotoSimplify => %v, want 0 (off)", got)
 	}
-	// Negative is the force-off sentinel and must be preserved, not defaulted.
-	if got := (Config{PhotoSimplify: -1}).normalized().PhotoSimplify; got >= 0 {
-		t.Errorf("negative PhotoSimplify => %v, want preserved negative (force off)", got)
+	if got := (Config{PhotoSimplify: -1}).normalized().PhotoSimplify; got != 0 {
+		t.Errorf("negative PhotoSimplify => %v, want 0 (off)", got)
 	}
-	// Positive values pass through; extremes clamp to the maximum.
-	if got := (Config{PhotoSimplify: 0.5}).normalized().PhotoSimplify; got != 0.5 {
-		t.Errorf("PhotoSimplify 0.5 => %v, want 0.5", got)
+	// Positive values pass through (the presets included); extremes clamp.
+	if got := (Config{PhotoSimplify: PhotoSimplifySubtle}).normalized().PhotoSimplify; got != PhotoSimplifySubtle {
+		t.Errorf("PhotoSimplify subtle => %v, want %v", got, PhotoSimplifySubtle)
+	}
+	if got := (Config{PhotoSimplify: PhotoSimplifyAggressive}).normalized().PhotoSimplify; got != PhotoSimplifyAggressive {
+		t.Errorf("PhotoSimplify aggressive => %v, want %v", got, PhotoSimplifyAggressive)
 	}
 	if got := (Config{PhotoSimplify: 999}).normalized().PhotoSimplify; got != maxPhotoSimplify {
 		t.Errorf("huge PhotoSimplify => %v, want clamped %v", got, maxPhotoSimplify)

@@ -1,0 +1,12 @@
+github.com/go-json-experiment/json v0.0.0-20240815175050-ebd3a8989ca1 h1:xcuWappghOVI8iNWoF2OKahVejd1LSVi/v4JED44Amo=
+github.com/go-json-experiment/json v0.0.0-20240815175050-ebd3a8989ca1/go.mod h1:BWmvoE1Xia34f3l/ibJweyhrT+aROb/FQ6d+37F0e2s=
+github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
+github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
+golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 h1:yixxcjnhBmY0nkL253HFVIm0JsFHwrHdT3Yh6szTnfY=
+golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8/go.mod h1:jj3sYF3dwk5D+ghuXyeI3r5MFf+NT2An6/9dOA95KSI=
+honnef.co/go/curve v0.0.0-20260205023122-f94fab6edc34 h1:uA33e3t9DTlGbILJ8Nm7LHo3J/BQEKrBJgQOPOPZV20=
+honnef.co/go/curve v0.0.0-20260205023122-f94fab6edc34/go.mod h1:w7kopinT0RfkruW9EGnxOstz1b2LYfnCd/yoyd3UpG8=
+honnef.co/go/safeish v0.0.0-20241114181457-67c0a2c357ad h1:6/Sl5Rx44C28ylGrKNEejIzrS2MbtLCdPsp47T6J3kg=
+honnef.co/go/safeish v0.0.0-20241114181457-67c0a2c357ad/go.mod h1:6TmSwH8eepkcwN0dPPAkTpxwjEJzgJq5Bv2HD3HHAP8=
+honnef.co/go/stuff v0.0.0-20251106172302-97592e64bbb7 h1:gWkkW9sJn7/NKEMhNofCiXoBUwxIol/NeHEqbpL2P1I=
+honnef.co/go/stuff v0.0.0-20251106172302-97592e64bbb7/go.mod h1:MHdLVYbTHmiSMY1u/X2Frle8zd1vpWJR87pyK8Oqluw=

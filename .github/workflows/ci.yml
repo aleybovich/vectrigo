@@ -1,0 +1,204 @@
+name: CI
+
+# Vectrigo is a multi-module repo:
+#   .        -> github.com/aleybovich/vectrigo   (engine + cmd/vectrigo-cli)
+#   bitrace/ -> github.com/aleybovich/bitrace     (clean-room tracer, own go.mod)
+#   minisvg/ -> github.com/aleybovich/minisvg     (SVG builder, own go.mod, zero deps)
+#   segment/ -> github.com/aleybovich/segment     (image segmentation, own go.mod, zero deps)
+#
+# This workflow enforces the two non-negotiable constraints from plan.md §1:
+#   1.1 Pure Go only (CGO_ENABLED=0, must cross-compile for any GOOS/GOARCH)
+#   1.2 Every third-party dependency must carry a permissive license
+# across all four modules.
+
+on:
+  push: {} # any branch
+  pull_request: {}
+  workflow_dispatch: {}
+
+# All jobs pin Go via go-version-file against the ROOT go.mod (go 1.26.2).
+# If the runner's cached Go doesn't have 1.26.2 preinstalled, GOTOOLCHAIN=auto
+# (the Go default) transparently downloads the exact toolchain version that
+# go.mod requires - no manual pinning needed here.
+env:
+  GO_VERSION_FILE: go.mod
+
+jobs:
+  # ---------------------------------------------------------------------
+  # 1. test: build + vet + test, CGO disabled, across all four modules.
+  # ---------------------------------------------------------------------
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: root
+            dir: .
+          - name: bitrace
+            dir: bitrace
+          - name: minisvg
+            dir: minisvg
+          - name: segment
+            dir: segment
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          # Shared module/build cache keyed off every module's go.sum so all
+          # three modules (and all jobs in this workflow) benefit from it.
+          cache-dependency-path: |
+            **/go.sum
+
+      - name: go build (CGO_ENABLED=0)
+        working-directory: ${{ matrix.dir }}
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: go vet
+        working-directory: ${{ matrix.dir }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: ${{ matrix.dir }}
+        run: go test ./... -count=1
+
+  # ---------------------------------------------------------------------
+  # 2. race: race-detector tests on the concurrency-critical engine module.
+  #    The race detector requires cgo; that's fine - it's test-only tooling.
+  #    The product itself still builds with CGO_ENABLED=0, proven by the
+  #    `test` job above. bitrace is included too since it's also exercised
+  #    concurrently by the engine's worker-pool tracing stage.
+  # ---------------------------------------------------------------------
+  race:
+    name: race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: |
+            **/go.sum
+
+      - name: go test -race (root engine module)
+        run: go test ./... -race -count=1
+
+      - name: go test -race (bitrace module)
+        working-directory: bitrace
+        run: go test ./... -race -count=1
+
+  # ---------------------------------------------------------------------
+  # 3. cross-compile: build-only matrix proving the pure-Go, CGO_ENABLED=0
+  #    constraint holds across target platforms, including js/wasm. Tests
+  #    can't run cross-platform, so this stage only builds.
+  # ---------------------------------------------------------------------
+  cross-compile:
+    name: cross-compile (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: js
+            goarch: wasm
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: |
+            **/go.sum
+
+      - name: go build (root engine module)
+        run: go build ./...
+
+      - name: go build (bitrace module)
+        working-directory: bitrace
+        run: go build ./...
+
+      - name: go build (minisvg module)
+        working-directory: minisvg
+        run: go build ./...
+
+      - name: go build (segment module)
+        working-directory: segment
+        run: go build ./...
+
+  # ---------------------------------------------------------------------
+  # 4. license-audit: enforce plan.md §1.2 - every THIRD-PARTY dependency
+  #    must be permissively licensed. Run for the root engine module and
+  #    for bitrace (the two modules with third-party deps; minisvg and
+  #    segment have none).
+  #
+  #    Gotchas handled below (see inline comments):
+  #      - Our OWN modules (PolyForm Noncommercial / MIT) are not
+  #        third-party and must be excluded via --ignore.
+  #      - honnef.co/go/stuff uses the REUSE convention (per-file licenses
+  #        in a LICENSES/ dir: MIT + BSD-3-Clause + CC0-1.0) which
+  #        go-licenses cannot classify from a single top-level LICENSE
+  #        file, so it is explicitly --ignore'd with the verified license
+  #        set documented inline (cross-checked against
+  #        THIRD_PARTY_NOTICES.md).
+  #      - go-licenses' standard-library detection compares against its
+  #        OWN build-time GOROOT. Because `go install ...@latest` and the
+  #        project build can end up on different auto-selected Go
+  #        toolchains (GOTOOLCHAIN=auto), that check can misfire and flag
+  #        every stdlib package as "no module info". Exporting GOROOT to
+  #        match the toolchain actually used for the project (`go env
+  #        GOROOT`) fixes this - see the exported GOROOT line below.
+  # ---------------------------------------------------------------------
+  license-audit:
+    name: license-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache-dependency-path: |
+            **/go.sum
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+
+      - name: License audit (root engine module)
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          export GOROOT="$(go env GOROOT)"
+          go-licenses check ./... \
+            --allowed_licenses=MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,Unlicense,Zlib,CC0-1.0 \
+            --ignore github.com/aleybovich/vectrigo \
+            --ignore github.com/aleybovich/bitrace \
+            --ignore github.com/aleybovich/minisvg \
+            --ignore github.com/aleybovich/segment \
+            --ignore honnef.co/go/stuff
+
+      - name: License audit (bitrace module)
+        working-directory: bitrace
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          export GOROOT="$(go env GOROOT)"
+          go-licenses check ./... \
+            --allowed_licenses=MIT,BSD-2-Clause,BSD-3-Clause,Apache-2.0,ISC,Unlicense,Zlib,CC0-1.0 \
+            --ignore github.com/aleybovich/bitrace \
+            --ignore honnef.co/go/stuff

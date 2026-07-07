@@ -1,0 +1,219 @@
+package vectrigo
+
+import (
+	"math"
+	"runtime"
+	"testing"
+)
+
+func TestResolveDetailCurve(t *testing.T) {
+	// Large image so maxKForPixels does not clamp (2000*2000/1024 ~ 3906 -> 256).
+	const W, H = 2000, 2000
+	cases := []struct {
+		s        int
+		wantK    int
+		wantTurd int
+	}{
+		{0, 4, 8},
+		{25, 8, 4},
+		{50, 16, 2},
+		{75, 32, 1},
+		{100, 64, 0},
+	}
+	for _, c := range cases {
+		cfg := DefaultConfig()
+		cfg.Sensitivity = c.s
+		cfg = cfg.normalized()
+		k, turd := cfg.resolveDetail(W, H)
+		if k != c.wantK {
+			t.Errorf("S=%d: K=%d, want %d", c.s, k, c.wantK)
+		}
+		if turd != c.wantTurd {
+			t.Errorf("S=%d: TurdSize=%d, want %d", c.s, turd, c.wantTurd)
+		}
+	}
+}
+
+func TestSensitivityClamp(t *testing.T) {
+	lo := Config{Sensitivity: -50}.normalized()
+	if lo.Sensitivity != 0 {
+		t.Errorf("Sensitivity clamp low = %d, want 0", lo.Sensitivity)
+	}
+	hi := Config{Sensitivity: 500}.normalized()
+	if hi.Sensitivity != 100 {
+		t.Errorf("Sensitivity clamp high = %d, want 100", hi.Sensitivity)
+	}
+}
+
+func TestZeroValueConfig(t *testing.T) {
+	c := Config{}.normalized()
+	if c.Sensitivity != 0 {
+		t.Errorf("bare Config{} Sensitivity = %d, want 0 (not the default 50)", c.Sensitivity)
+	}
+	if c.Workers != runtime.NumCPU() {
+		t.Errorf("Workers = %d, want NumCPU %d", c.Workers, runtime.NumCPU())
+	}
+	if c.MaxDimensions.Width != 2048 || c.MaxDimensions.Height != 2048 {
+		t.Errorf("MaxDimensions = %v, want 2048x2048", c.MaxDimensions)
+	}
+	if c.Precision != 0 {
+		t.Errorf("Precision = %d, want 0 (bare zero clamps to 0)", c.Precision)
+	}
+	if c.AlphaMax != 0 {
+		t.Errorf("AlphaMax = %v, want 0 (legal, max-angular)", c.AlphaMax)
+	}
+}
+
+func TestDefaultConfigValues(t *testing.T) {
+	c := DefaultConfig()
+	if c.Sensitivity != 50 {
+		t.Errorf("Sensitivity = %d, want 50", c.Sensitivity)
+	}
+	if c.AlphaMax != 1.0 {
+		t.Errorf("AlphaMax = %v, want 1.0", c.AlphaMax)
+	}
+	if !c.Optimize {
+		t.Error("Optimize = false, want true")
+	}
+	if c.Precision != 2 {
+		t.Errorf("Precision = %d, want 2", c.Precision)
+	}
+}
+
+func TestAutoKTauNormalization(t *testing.T) {
+	if got := DefaultConfig().AutoKTau; got != 0.02 {
+		t.Errorf("DefaultConfig().AutoKTau = %v, want 0.02", got)
+	}
+	if got := DefaultConfig().normalized().AutoKTau; got != 0.02 {
+		t.Errorf("normalized DefaultConfig AutoKTau = %v, want 0.02", got)
+	}
+	// Bare zero value resolves to the default.
+	if got := (Config{}).normalized().AutoKTau; got != 0.02 {
+		t.Errorf("bare Config{} AutoKTau = %v, want default 0.02", got)
+	}
+	// Negative resolves to the default.
+	if got := (Config{AutoKTau: -1}).normalized().AutoKTau; got != 0.02 {
+		t.Errorf("negative AutoKTau => %v, want default 0.02", got)
+	}
+	// Over-large clamps to the maximum.
+	if got := (Config{AutoKTau: 5}).normalized().AutoKTau; got != 0.5 {
+		t.Errorf("over-large AutoKTau => %v, want clamped 0.5", got)
+	}
+	// NaN resolves to the default.
+	if got := (Config{AutoKTau: math.NaN()}).normalized().AutoKTau; got != 0.02 {
+		t.Errorf("NaN AutoKTau => %v, want default 0.02", got)
+	}
+	// A legitimate in-range value passes through untouched.
+	if got := (Config{AutoKTau: 0.08}).normalized().AutoKTau; got != 0.08 {
+		t.Errorf("in-range AutoKTau => %v, want 0.08", got)
+	}
+}
+
+func TestPhotoDetailNormalization(t *testing.T) {
+	// DefaultConfig carries the documented default and survives normalization.
+	if got := DefaultConfig().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("DefaultConfig().PhotoDetail = %v, want %v", got, defaultPhotoDetail)
+	}
+	if got := DefaultConfig().normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("normalized DefaultConfig PhotoDetail = %v, want %v", got, defaultPhotoDetail)
+	}
+	// Bare zero value resolves to the default (12).
+	if got := (Config{}).normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("bare Config{} PhotoDetail = %v, want default %v", got, defaultPhotoDetail)
+	}
+	// Negative resolves to the default.
+	if got := (Config{PhotoDetail: -3}).normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("negative PhotoDetail => %v, want default %v", got, defaultPhotoDetail)
+	}
+	// NaN resolves to the default.
+	if got := (Config{PhotoDetail: math.NaN()}).normalized().PhotoDetail; got != defaultPhotoDetail {
+		t.Errorf("NaN PhotoDetail => %v, want default %v", got, defaultPhotoDetail)
+	}
+	// Below the band clamps up to the minimum.
+	if got := (Config{PhotoDetail: 1}).normalized().PhotoDetail; got != minPhotoDetail {
+		t.Errorf("below-band PhotoDetail => %v, want clamped %v", got, minPhotoDetail)
+	}
+	// Above the band clamps down to the maximum.
+	if got := (Config{PhotoDetail: 999}).normalized().PhotoDetail; got != maxPhotoDetail {
+		t.Errorf("above-band PhotoDetail => %v, want clamped %v", got, maxPhotoDetail)
+	}
+	// An in-band value passes through untouched.
+	if got := (Config{PhotoDetail: 20}).normalized().PhotoDetail; got != 20 {
+		t.Errorf("in-band PhotoDetail => %v, want 20", got)
+	}
+}
+
+func TestPhotoEdgeNormalization(t *testing.T) {
+	// DefaultConfig and a bare Config{} both default to crisp (the zero value).
+	if got := DefaultConfig().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("DefaultConfig().PhotoEdge = %v, want PhotoEdgeCrisp", got)
+	}
+	if got := (Config{}).PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("bare Config{} PhotoEdge = %v, want PhotoEdgeCrisp", got)
+	}
+	if got := DefaultConfig().normalized().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("normalized DefaultConfig PhotoEdge = %v, want PhotoEdgeCrisp", got)
+	}
+	// A valid explicit stroke survives normalization.
+	if got := (Config{PhotoEdge: PhotoEdgeStroke}).normalized().PhotoEdge; got != PhotoEdgeStroke {
+		t.Errorf("PhotoEdgeStroke => %v, want PhotoEdgeStroke", got)
+	}
+	// Out-of-range values clamp back to crisp.
+	if got := (Config{PhotoEdge: PhotoEdge(99)}).normalized().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("out-of-range PhotoEdge(99) => %v, want PhotoEdgeCrisp", got)
+	}
+	if got := (Config{PhotoEdge: PhotoEdge(-1)}).normalized().PhotoEdge; got != PhotoEdgeCrisp {
+		t.Errorf("out-of-range PhotoEdge(-1) => %v, want PhotoEdgeCrisp", got)
+	}
+}
+
+func TestOverridesWin(t *testing.T) {
+	// Explicit K survives (resolution large enough not to clamp).
+	cfg := DefaultConfig()
+	cfg.K = 7
+	k, _ := cfg.normalized().resolveDetail(2000, 2000)
+	if k != 7 {
+		t.Errorf("explicit K = %d, want 7", k)
+	}
+
+	// TurdSize -1 => disabled (0).
+	cfg = DefaultConfig()
+	cfg.TurdSize = -1
+	_, turd := cfg.normalized().resolveDetail(2000, 2000)
+	if turd != 0 {
+		t.Errorf("TurdSize=-1 => %d, want 0 (disabled)", turd)
+	}
+
+	// TurdSize 5 => used as-is.
+	cfg = DefaultConfig()
+	cfg.TurdSize = 5
+	_, turd = cfg.normalized().resolveDetail(2000, 2000)
+	if turd != 5 {
+		t.Errorf("TurdSize=5 => %d, want 5", turd)
+	}
+}
+
+func TestKClampBounds(t *testing.T) {
+	// K below 2 is raised to 2.
+	cfg := DefaultConfig()
+	cfg.K = 1
+	k, _ := cfg.normalized().resolveDetail(2000, 2000)
+	if k != 2 {
+		t.Errorf("K=1 => %d, want clamped to 2", k)
+	}
+
+	// Tiny image caps K via maxKForPixels (px/1024, min 2).
+	cfg = DefaultConfig()
+	cfg.K = 100
+	k, _ = cfg.normalized().resolveDetail(32, 32) // 1024 px -> maxK 2... actually 1024/1024=1 -> clamp 2
+	if k != 2 {
+		t.Errorf("tiny image K=100 => %d, want 2", k)
+	}
+
+	// AlphaMax clamps to [0,1.334].
+	cfg = DefaultConfig()
+	cfg.AlphaMax = 99
+	if got := cfg.normalized().AlphaMax; got != 1.334 {
+		t.Errorf("AlphaMax clamp = %v, want 1.334", got)
+	}
+}

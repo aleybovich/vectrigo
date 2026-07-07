@@ -41,10 +41,15 @@
 //     is absorbed into the neighbour across its lowest-weight boundary edge.
 //     Raising MinSize removes small regions (speckle, thin slivers) and lowers
 //     the count without much changing the large-region structure.
-//   - Sigma (Gaussian pre-smoothing): blurs the image before building the
-//     graph, suppressing pixel noise and JPEG texture so genuine boundaries
-//     dominate. 0 disables it; ~0.5–1.0 is a mild, typical setting. More
-//     smoothing tends to reduce region count.
+//   - PreFilter (pre-smoothing): the filter applied before the graph is built,
+//     suppressing pixel noise and texture so genuine boundaries dominate.
+//     PreFilterGaussian blurs everything uniformly (the legacy Sigma field
+//     selects this when PreFilter is unset). PreFilterBilateral is
+//     edge-preserving: it denoises within regions while keeping strong edges
+//     (text, feature lines) crisp — the right choice for region-first
+//     vectorization of photos. PreFilterKuwahara flattens interiors into
+//     painterly patches. More smoothing tends to reduce region count. See the
+//     PreFilter constants and BilateralFilter for parameter guidance.
 package segment
 
 import (
@@ -52,8 +57,6 @@ import (
 	"image/color"
 	"math"
 	"sort"
-
-	"github.com/disintegration/imaging"
 )
 
 // opaqueAlpha is the alpha threshold (matching the quantize stage) at or above
@@ -82,11 +85,33 @@ type Options struct {
 	// across their lowest-weight boundary edge. 0 or 1 disables the pass.
 	MinSize int
 
-	// Sigma controls optional Gaussian pre-smoothing of the image before the
-	// graph is built (edge weights are computed on the smoothed image). 0
-	// disables smoothing. Region colours reported by MeanColors are always
-	// computed from the original, unsmoothed image.
+	// Sigma is the legacy Gaussian pre-smoothing control, retained for
+	// backward compatibility. It is honoured ONLY when PreFilter is left at
+	// its zero value (PreFilterNone): Sigma > 0 then applies a Gaussian blur
+	// of that sigma before the graph is built (exactly the historical
+	// behaviour) and Sigma == 0 disables smoothing. When any explicit
+	// PreFilter is selected, Sigma is ignored except as a fallback radius for
+	// PreFilterGaussian when SpatialSigma is unset. Region colours reported by
+	// MeanColors are always computed from the original, unsmoothed image.
 	Sigma float64
+
+	// PreFilter selects the edge/pre-smoothing filter applied to the working
+	// image before the FH edge graph is built. The zero value (PreFilterNone)
+	// preserves the legacy Sigma-driven behaviour, so Options{} and any
+	// Sigma-only Options are unaffected by this field's existence. See
+	// PreFilter's constants for the available filters and their parameters.
+	PreFilter PreFilter
+
+	// SpatialSigma is the spatial parameter of the selected PreFilter: the
+	// bilateral/Gaussian blur radius sigma (σ_s), or, for Kuwahara, the window
+	// radius in pixels (via int(SpatialSigma)). Ignored when PreFilter is
+	// PreFilterNone.
+	SpatialSigma float64
+
+	// RangeSigma is the range (colour-difference) parameter σ_r of the
+	// bilateral filter: smaller values preserve more edges, larger values
+	// blend across bigger colour differences. Only PreFilterBilateral uses it.
+	RangeSigma float64
 }
 
 // Result holds a per-pixel region labelling produced by Segment.
@@ -131,12 +156,11 @@ func Segment(img *image.NRGBA, opt Options) Result {
 	// a transparent pixel opaque or vice versa.
 	pix := img.Pix
 
-	// Colour weights use the smoothed image when Sigma > 0. imaging.Blur is a
-	// deterministic separable Gaussian convolution and is already a dependency.
-	spix := pix
-	if opt.Sigma > 0 {
-		spix = imaging.Blur(img, opt.Sigma).Pix
-	}
+	// Edge weights are computed on the pre-filtered image (bilateral, Kuwahara,
+	// Gaussian, or none) selected by opt; MeanColors still reads the original
+	// img so region colours are true, not smoothed. preFilterPix returns the
+	// original pix unchanged when no smoothing is requested.
+	spix := preFilterPix(img, opt)
 
 	opaque := make([]bool, n)
 	for i := 0; i < n; i++ {

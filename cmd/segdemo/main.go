@@ -5,7 +5,19 @@
 //
 // Usage:
 //
+//	segdemo <input.png> <K> <minSize> <prefilter> <sigmaOrSpatial> [rangeSigma] [out.svg]
+//
+// where <prefilter> is one of none, gaussian, bilateral, kuwahara. For none no
+// smoothing parameters are read. For gaussian and kuwahara <sigmaOrSpatial> is
+// the blur sigma / window radius. For bilateral <sigmaOrSpatial> is the spatial
+// sigma and <rangeSigma> the range (colour) sigma.
+//
+// The legacy form
+//
 //	segdemo <input.png> <K> <minSize> [sigma] [out.svg]
+//
+// is still accepted: when the 4th argument parses as a number it is treated as
+// the legacy Gaussian sigma.
 //
 // It decodes the image, segments it into regions, gives each region its mean
 // colour, traces every region's mask with bitrace, and writes a two-layer SVG
@@ -40,7 +52,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: segdemo <input.png> <K> <minSize> [sigma] [out.svg]")
+		return fmt.Errorf("usage: segdemo <input.png> <K> <minSize> <prefilter> <sigmaOrSpatial> [rangeSigma] [out.svg]")
 	}
 	inPath := args[0]
 	k, err := strconv.ParseFloat(args[1], 64)
@@ -51,15 +63,11 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("parsing minSize %q: %w", args[2], err)
 	}
-	sigma := 0.0
-	if len(args) >= 4 {
-		if sigma, err = strconv.ParseFloat(args[3], 64); err != nil {
-			return fmt.Errorf("parsing sigma %q: %w", args[3], err)
-		}
-	}
+
+	opt := segment.Options{K: k, MinSize: minSize}
 	outPath := "seg.svg"
-	if len(args) >= 5 {
-		outPath = args[4]
+	if err := parseFilterArgs(args[3:], &opt, &outPath); err != nil {
+		return err
 	}
 
 	f, err := os.Open(inPath)
@@ -76,8 +84,22 @@ func run(args []string) error {
 	b := img.NRGBA.Bounds()
 	w, h := b.Dx(), b.Dy()
 
+	// Time the pre-filter alone (the same filter Segment applies internally),
+	// then the full segmentation, so the two costs can be reported separately.
+	var filterElapsed time.Duration
+	switch opt.PreFilter {
+	case segment.PreFilterBilateral:
+		fs := time.Now()
+		segment.BilateralFilter(img.NRGBA, opt.SpatialSigma, opt.RangeSigma)
+		filterElapsed = time.Since(fs)
+	case segment.PreFilterKuwahara:
+		fs := time.Now()
+		segment.KuwaharaFilter(img.NRGBA, int(opt.SpatialSigma))
+		filterElapsed = time.Since(fs)
+	}
+
 	start := time.Now()
-	res := segment.Segment(img.NRGBA, segment.Options{K: k, MinSize: minSize, Sigma: sigma})
+	res := segment.Segment(img.NRGBA, opt)
 	segElapsed := time.Since(start)
 
 	colors := segment.MeanColors(img.NRGBA, res)
@@ -136,9 +158,98 @@ func run(args []string) error {
 	fmt.Printf("paths:       %d\n", pathCount)
 	fmt.Printf("output:      %s (%d bytes)\n", outPath, fi.Size())
 	fmt.Printf("dimensions:  working %dx%d, original %dx%d\n", w, h, img.OrigW, img.OrigH)
-	fmt.Printf("segment k=%.3g minSize=%d sigma=%.3g\n", k, minSize, sigma)
-	fmt.Printf("segment time: %s\n", segElapsed)
+	fmt.Printf("prefilter:   %s\n", filterDesc(opt))
+	if filterElapsed > 0 {
+		fmt.Printf("filter time: %s (standalone; also included in segment time)\n", filterElapsed)
+	}
+	fmt.Printf("segment time: %s (includes pre-filter)\n", segElapsed)
 	return nil
+}
+
+// parseFilterArgs interprets the trailing arguments (everything after minSize)
+// as either the new <prefilter> <sigmaOrSpatial> [rangeSigma] [out.svg] form or
+// the legacy [sigma] [out.svg] form, writing the result into opt and outPath.
+func parseFilterArgs(rest []string, opt *segment.Options, outPath *string) error {
+	if len(rest) == 0 {
+		return nil
+	}
+	if pf, ok := parseFilterName(rest[0]); ok {
+		// New form.
+		opt.PreFilter = pf
+		idx := 1
+		if pf != segment.PreFilterNone {
+			if idx >= len(rest) {
+				return fmt.Errorf("prefilter %q needs a sigma/radius argument", rest[0])
+			}
+			s, err := strconv.ParseFloat(rest[idx], 64)
+			if err != nil {
+				return fmt.Errorf("parsing sigmaOrSpatial %q: %w", rest[idx], err)
+			}
+			opt.SpatialSigma = s
+			idx++
+			if pf == segment.PreFilterBilateral {
+				if idx >= len(rest) {
+					return fmt.Errorf("bilateral needs a rangeSigma argument")
+				}
+				r, err := strconv.ParseFloat(rest[idx], 64)
+				if err != nil {
+					return fmt.Errorf("parsing rangeSigma %q: %w", rest[idx], err)
+				}
+				opt.RangeSigma = r
+				idx++
+			}
+		}
+		if idx < len(rest) {
+			*outPath = rest[idx]
+		}
+		return nil
+	}
+	// Legacy form: rest[0] is the Gaussian sigma.
+	s, err := strconv.ParseFloat(rest[0], 64)
+	if err != nil {
+		return fmt.Errorf("parsing sigma %q (or unknown prefilter name): %w", rest[0], err)
+	}
+	opt.Sigma = s
+	if len(rest) >= 2 {
+		*outPath = rest[1]
+	}
+	return nil
+}
+
+// parseFilterName maps a prefilter name to its PreFilter value.
+func parseFilterName(s string) (segment.PreFilter, bool) {
+	switch s {
+	case "none":
+		return segment.PreFilterNone, true
+	case "gaussian":
+		return segment.PreFilterGaussian, true
+	case "bilateral":
+		return segment.PreFilterBilateral, true
+	case "kuwahara":
+		return segment.PreFilterKuwahara, true
+	}
+	return segment.PreFilterNone, false
+}
+
+// filterDesc renders the selected pre-filter and its parameters for the report.
+func filterDesc(opt segment.Options) string {
+	switch opt.PreFilter {
+	case segment.PreFilterGaussian:
+		s := opt.SpatialSigma
+		if s <= 0 {
+			s = opt.Sigma
+		}
+		return fmt.Sprintf("gaussian sigma=%.3g", s)
+	case segment.PreFilterBilateral:
+		return fmt.Sprintf("bilateral spatialSigma=%.3g rangeSigma=%.3g", opt.SpatialSigma, opt.RangeSigma)
+	case segment.PreFilterKuwahara:
+		return fmt.Sprintf("kuwahara radius=%d", int(opt.SpatialSigma))
+	default:
+		if opt.Sigma > 0 {
+			return fmt.Sprintf("none (legacy gaussian sigma=%.3g)", opt.Sigma)
+		}
+		return "none"
+	}
 }
 
 // pathData concatenates every traced contour of a region into a single SVG "d"

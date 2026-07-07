@@ -104,23 +104,26 @@ func fitCentroids(pix []uint8, sample []int, k int) (centroids [][3]float64, sam
 	counts := make([]int, k)
 	for iter := 0; iter < maxIter; iter++ {
 		changed := false
-		for si, idx := range sample {
-			c := nearest(centroids, rgbAt(pix, idx))
-			if c != sampLabels[si] {
-				sampLabels[si] = c
-				changed = true
-			}
-		}
 		for c := range sum {
 			sum[c] = [3]float64{}
 			counts[c] = 0
 		}
+		// Fused assignment + accumulation: each sample point is read once,
+		// assigned to its nearest centroid, and folded into that cluster's
+		// running sum in the same pass. This is byte-identical to the prior
+		// two separate loops because sampLabels[si] equalled this same nearest
+		// value after the old assignment loop, the accumulation still runs in
+		// ascending sample order, and the float values are unchanged.
 		for si, idx := range sample {
-			c := sampLabels[si]
-			r, g, b := rgb3(pix, idx)
-			sum[c][0] += r
-			sum[c][1] += g
-			sum[c][2] += b
+			p := rgbAt(pix, idx)
+			c := nearest(centroids, p)
+			if c != sampLabels[si] {
+				sampLabels[si] = c
+				changed = true
+			}
+			sum[c][0] += p[0]
+			sum[c][1] += p[1]
+			sum[c][2] += p[2]
 			counts[c]++
 		}
 		for c := 0; c < k; c++ {
@@ -186,12 +189,6 @@ func kmeansPlusPlus(pix []uint8, sample []int, k int, rng *rand.Rand) [][3]float
 func rgbAt(pix []uint8, idx int) [3]float64 {
 	o := idx * 4
 	return [3]float64{float64(pix[o]), float64(pix[o+1]), float64(pix[o+2])}
-}
-
-// rgb3 is rgbAt unpacked into three returns (avoids array copies in hot loops).
-func rgb3(pix []uint8, idx int) (r, g, b float64) {
-	o := idx * 4
-	return float64(pix[o]), float64(pix[o+1]), float64(pix[o+2])
 }
 
 // nearest returns the index of the centroid closest (squared Euclidean) to p.

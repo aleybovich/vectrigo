@@ -81,16 +81,34 @@ func assembleLayers(centroids [][3]float64, labels []int, w, h int) []Layer {
 		}
 	}
 
+	// Count non-empty clusters so all masks can share a single contiguous
+	// backing allocation instead of one heap allocation per layer. Each layer's
+	// Bits is a disjoint sub-slice of this buffer, so the bytes handed to
+	// bitrace are identical to the previous per-layer make([]bool, w*h).
+	nLayers := 0
+	for c := 0; c < k; c++ {
+		if areas[c] != 0 {
+			nLayers++
+		}
+	}
+	plane := w * h
+	buf := make([]bool, nLayers*plane)
+
 	// Pre-allocate one flat mask per non-empty cluster and map cluster index
-	// to its Layer slot.
+	// to its Layer slot. maskBits gives the fill loop direct slice access,
+	// avoiding a struct load per pixel.
 	slot := make([]int, k)
-	layers := make([]Layer, 0, k)
+	maskBits := make([][]bool, nLayers)
+	layers := make([]Layer, 0, nLayers)
 	for c := 0; c < k; c++ {
 		if areas[c] == 0 {
 			slot[c] = -1
 			continue
 		}
-		slot[c] = len(layers)
+		s := len(layers)
+		slot[c] = s
+		bits := buf[s*plane : (s+1)*plane : (s+1)*plane]
+		maskBits[s] = bits
 		layers = append(layers, Layer{
 			Color: color.RGBA{
 				R: imageutil.Round8(centroids[c][0]),
@@ -98,7 +116,7 @@ func assembleLayers(centroids [][3]float64, labels []int, w, h int) []Layer {
 				B: imageutil.Round8(centroids[c][2]),
 				A: 255,
 			},
-			Mask: bitrace.Bitmap{W: w, H: h, Bits: make([]bool, w*h)},
+			Mask: bitrace.Bitmap{W: w, H: h, Bits: bits},
 			Area: areas[c],
 		})
 	}
@@ -109,7 +127,7 @@ func assembleLayers(centroids [][3]float64, labels []int, w, h int) []Layer {
 			continue
 		}
 		if s := slot[lb]; s >= 0 {
-			layers[s].Mask.Bits[i] = true
+			maskBits[s][i] = true
 		}
 	}
 

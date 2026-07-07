@@ -136,6 +136,19 @@ sum-of-squares) for increasing `K` and stops at the "knee" — the smallest `K`
 that already explains the bulk of the image's colour variation, so extra colours
 would add detail with diminishing returns.
 
+- **Tuning the knee with `AutoKTau`.** `AutoKTau` (a `float64`) is the residual
+  distortion threshold for that knee: the smallest `K` whose distortion has
+  dropped to this fraction of the single-cluster distortion is chosen. **Smaller
+  ⇒ more colours / higher fidelity; larger ⇒ fewer colours.** The zero value
+  (and a bare `Config{}`) means the default, `0.02`, which preserves today's
+  auto-K output; it is clamped to a maximum of `0.5`. It only applies under
+  `AutoK` and has no effect otherwise. At the default `0.02`, complex photos
+  rarely reach the knee and saturate near the internal colour ceiling, so they
+  all pick a similar large `K`; raising it (around `0.05`) trips the knee earlier
+  so different complex photos **differentiate** into distinct, smaller `K` values
+  that reflect their complexity — at the cost of coarser output. Push it too high
+  and even simple images start losing real colours.
+
 ## License
 
 Vectrigo — the engine and the `vectrigo-cli` command — is licensed under the

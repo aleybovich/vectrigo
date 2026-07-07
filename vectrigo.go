@@ -54,7 +54,7 @@ func (e *Engine) Convert(r io.Reader, w io.Writer) error {
 		// Sensitivity. An explicit K (> 0) is a hard override and takes the
 		// resolveDetail path below instead. TurdSize is derived from the chosen
 		// K (or an explicit override), never from Sensitivity.
-		k = quantize.SelectK(img, maxKForPixels(b.Dx()*b.Dy()))
+		k = quantize.SelectK(img, maxKForPixels(b.Dx()*b.Dy()), e.cfg.AutoKTau)
 		turd = e.cfg.turdForK(k)
 	} else {
 		k, turd = e.cfg.resolveDetail(b.Dx(), b.Dy())

@@ -5,6 +5,17 @@ import (
 	"runtime"
 )
 
+const (
+	// defaultAutoKTau is the residual-distortion threshold auto-K uses when
+	// [Config.AutoKTau] is unset (<= 0) or NaN. It preserves auto-K's historical
+	// output. See [Config.AutoKTau].
+	defaultAutoKTau = 0.02
+
+	// maxAutoKTau is the upper clamp for [Config.AutoKTau]. Beyond this even
+	// simple images start under-counting real colours.
+	maxAutoKTau = 0.5
+)
+
 // Dimensions is a width/height pair in pixels.
 type Dimensions struct {
 	Width  int
@@ -45,6 +56,25 @@ type Config struct {
 	// Sensitivity is simply ignored for K. (A front-end may still choose to
 	// expose AutoK and Sensitivity as a mutually exclusive choice.)
 	AutoK bool
+
+	// AutoKTau is the residual-distortion threshold for auto-K's "knee": the
+	// smallest cluster count K whose within-cluster distortion has fallen to
+	// this fraction of the single-cluster (K=1) distortion is chosen. It tunes
+	// the fidelity/differentiation trade-off. Smaller ⇒ the knee trips later ⇒
+	// MORE colours / higher fidelity; larger ⇒ the knee trips earlier ⇒ FEWER
+	// colours, which lets complex photos (that otherwise all saturate at the
+	// auto-selection ceiling) differentiate into distinct, smaller K values that
+	// reflect their complexity, at the cost of coarser output.
+	//
+	// Only applies when [Config.AutoK] is true AND no explicit K (> 0) override
+	// is set (explicit K bypasses auto-K entirely). With AutoK false it has NO
+	// effect and output is byte-identical regardless of its value.
+	//
+	// Zero value means the default: AutoKTau <= 0 (including a bare Config{}) and
+	// NaN resolve to 0.02 (the value that preserves auto-K's historical output).
+	// It is clamped to a maximum of 0.5; beyond that even simple images start
+	// losing real colours.
+	AutoKTau float64
 
 	// K forces an exact cluster count, overriding the value derived from
 	// Sensitivity. 0 means derive. When set it is clamped to
@@ -97,6 +127,7 @@ func DefaultConfig() Config {
 	return Config{
 		Sensitivity:   50,
 		AutoK:         false,
+		AutoKTau:      defaultAutoKTau,
 		K:             0,
 		TurdSize:      0,
 		AlphaMax:      1.0,
@@ -132,6 +163,14 @@ func (c Config) normalized() Config {
 	}
 
 	c.Precision = clampInt(c.Precision, 0, 6)
+
+	// AutoKTau: zero value (and NaN) means "use the default"; clamp an
+	// unreasonably large value to a sane maximum.
+	if math.IsNaN(c.AutoKTau) || c.AutoKTau <= 0 {
+		c.AutoKTau = defaultAutoKTau
+	} else if c.AutoKTau > maxAutoKTau {
+		c.AutoKTau = maxAutoKTau
+	}
 
 	// K < 0 is meaningless; fold to derive. TurdSize < 0 is preserved as the
 	// force-disable sentinel.

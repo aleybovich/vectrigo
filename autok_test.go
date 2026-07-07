@@ -99,6 +99,46 @@ func TestAutoKExplicitKWins(t *testing.T) {
 	}
 }
 
+// TestAutoKTauNoEffectWhenAutoKOff proves AutoKTau is inert unless AutoK is on:
+// with AutoK=false, two runs with wildly different AutoKTau values must produce
+// byte-identical output.
+func TestAutoKTauNoEffectWhenAutoKOff(t *testing.T) {
+	src := stripePNG(t, 240, 80, autoKTestColors)
+
+	a := DefaultConfig() // AutoK false
+	a.AutoKTau = 0.02
+
+	b := DefaultConfig() // AutoK false
+	b.AutoKTau = 0.4
+
+	if !bytes.Equal(convertBytes(t, src, a), convertBytes(t, src, b)) {
+		t.Fatal("AutoKTau must have no effect when AutoK is false; outputs must be byte-identical")
+	}
+}
+
+// TestAutoKTauAffectsOutputWhenAutoKOn confirms AutoKTau does change output when
+// AutoK is on: on a complex fixture, a larger tau trips the knee earlier and
+// yields a different (coarser) document than the default tau.
+func TestAutoKTauAffectsOutputWhenAutoKOn(t *testing.T) {
+	src, err := os.ReadFile("testdata/street_market.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lo := DefaultConfig()
+	lo.AutoK = true
+	lo.AutoKTau = 0.02
+	lo.MaxDimensions = Dimensions{Width: 256, Height: 256}
+
+	hi := DefaultConfig()
+	hi.AutoK = true
+	hi.AutoKTau = 0.08
+	hi.MaxDimensions = Dimensions{Width: 256, Height: 256}
+
+	if bytes.Equal(convertBytes(t, src, lo), convertBytes(t, src, hi)) {
+		t.Fatal("AutoKTau should change output under AutoK on a complex image, but outputs were identical")
+	}
+}
+
 // goldenShapesDefaultSHA256 is the sha256 of DefaultConfig()'s SVG output for
 // testdata/shapes.png captured from the code base *before* the AutoK change.
 // It guards the AutoK=false path against any byte-level regression.

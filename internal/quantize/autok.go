@@ -25,10 +25,12 @@ const (
 	// many values of k rather than one.
 	autoKMaxSamples = 4096
 
-	// autoKTau is the residual-distortion threshold for the knee. SelectK picks
-	// the smallest k whose within-cluster distortion has fallen to <= autoKTau
-	// of the single-cluster (k=1) distortion — i.e. the k that already explains
-	// (1 - autoKTau) of the image's colour variation. 0.02 => 98% explained.
+	// autoKTau documents the default residual-distortion threshold for the knee.
+	// SelectK picks the smallest k whose within-cluster distortion has fallen to
+	// <= tau of the single-cluster (k=1) distortion — i.e. the k that already
+	// explains (1 - tau) of the image's colour variation. 0.02 => 98% explained.
+	// This const records the default only; the effective threshold is the tau
+	// argument passed to SelectK (see Config.AutoKTau / defaultAutoKTau).
 	autoKTau = 0.02
 )
 
@@ -40,8 +42,12 @@ const (
 //
 // Method. SelectK computes the k-means within-cluster sum-of-squares
 // (distortion) for k = 1, 2, 3, … and stops at the "knee" — the smallest k
-// whose distortion has dropped to autoKTau of the single-cluster distortion,
-// meaning further clusters yield only diminishing returns. This
+// whose distortion has dropped to tau of the single-cluster distortion,
+// meaning further clusters yield only diminishing returns. A smaller tau
+// demands more colours (higher fidelity); a larger tau trips the knee earlier,
+// yielding fewer colours and differentiating complex images that otherwise
+// saturate at the ceiling. Callers pass the (already defaulted/clamped) tau;
+// see Config.AutoKTau. This
 // explained-distortion / scree criterion is preferred over the geometric
 // Kneedle distance-to-chord method because for images made of well-separated
 // solid colour regions the distortion curve is piecewise-linear (its
@@ -54,7 +60,7 @@ const (
 //
 // SelectK is deterministic: it reuses the seeded k-means core (kmeansSeed), so
 // the same image always yields the same K.
-func SelectK(img normalize.Image, maxK int) int {
+func SelectK(img normalize.Image, maxK int, tau float64) int {
 	b := img.NRGBA.Bounds()
 	w, h := b.Dx(), b.Dy()
 	n := w * h
@@ -102,9 +108,9 @@ func SelectK(img normalize.Image, maxK int) int {
 		return 2
 	}
 
-	// Smallest k that explains (1 - autoKTau) of the colour variation.
+	// Smallest k that explains (1 - tau) of the colour variation.
 	for k := 2; k <= hi; k++ {
-		if sampleDistortion(pix, sample, k)/base <= autoKTau {
+		if sampleDistortion(pix, sample, k)/base <= tau {
 			return k
 		}
 	}

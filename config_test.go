@@ -1,6 +1,7 @@
 package vectrigo
 
 import (
+	"math"
 	"runtime"
 	"testing"
 )
@@ -76,6 +77,35 @@ func TestDefaultConfigValues(t *testing.T) {
 	}
 	if c.Precision != 2 {
 		t.Errorf("Precision = %d, want 2", c.Precision)
+	}
+}
+
+func TestAutoKTauNormalization(t *testing.T) {
+	if got := DefaultConfig().AutoKTau; got != 0.02 {
+		t.Errorf("DefaultConfig().AutoKTau = %v, want 0.02", got)
+	}
+	if got := DefaultConfig().normalized().AutoKTau; got != 0.02 {
+		t.Errorf("normalized DefaultConfig AutoKTau = %v, want 0.02", got)
+	}
+	// Bare zero value resolves to the default.
+	if got := (Config{}).normalized().AutoKTau; got != 0.02 {
+		t.Errorf("bare Config{} AutoKTau = %v, want default 0.02", got)
+	}
+	// Negative resolves to the default.
+	if got := (Config{AutoKTau: -1}).normalized().AutoKTau; got != 0.02 {
+		t.Errorf("negative AutoKTau => %v, want default 0.02", got)
+	}
+	// Over-large clamps to the maximum.
+	if got := (Config{AutoKTau: 5}).normalized().AutoKTau; got != 0.5 {
+		t.Errorf("over-large AutoKTau => %v, want clamped 0.5", got)
+	}
+	// NaN resolves to the default.
+	if got := (Config{AutoKTau: math.NaN()}).normalized().AutoKTau; got != 0.02 {
+		t.Errorf("NaN AutoKTau => %v, want default 0.02", got)
+	}
+	// A legitimate in-range value passes through untouched.
+	if got := (Config{AutoKTau: 0.08}).normalized().AutoKTau; got != 0.08 {
+		t.Errorf("in-range AutoKTau => %v, want 0.08", got)
 	}
 }
 

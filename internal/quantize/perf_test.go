@@ -69,7 +69,7 @@ func BenchmarkSelectK(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if k := SelectK(img, 256); k < 2 {
+		if k := SelectK(img, 256, 0.02); k < 2 {
 			b.Fatalf("SelectK = %d", k)
 		}
 	}

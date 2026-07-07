@@ -113,6 +113,50 @@ func TestAutoOutputPath(t *testing.T) {
 	}
 }
 
+func TestPhotoOutputPath(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "png with subdirectory",
+			input: "photos/street.png",
+			want:  "photos/street.photo.svg",
+		},
+		{
+			name:  "absolute jpeg path",
+			input: "/tmp/a.jpeg",
+			want:  "/tmp/a.photo.svg",
+		},
+		{
+			name:  "webp no directory",
+			input: "image.webp",
+			want:  "image.photo.svg",
+		},
+		{
+			name:  "multiple dots in name only strips final extension",
+			input: "archive/my.photo.v2.jpg",
+			want:  "archive/my.photo.v2.photo.svg",
+		},
+		{
+			name:  "relative path with dot-slash",
+			input: "./nested/dir/pic.jpg",
+			want:  filepath.Join("nested/dir", "pic.photo.svg"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := photoOutputPath(tt.input)
+			want := filepath.FromSlash(tt.want)
+			if got != want {
+				t.Errorf("photoOutputPath(%q) = %q, want %q", tt.input, got, want)
+			}
+		})
+	}
+}
+
 func TestValidateSensitivity(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -234,16 +278,49 @@ func TestRunModeMatrix(t *testing.T) {
 			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.0.svg") },
 		},
 		{
-			name:        "no sensitivity and no auto-k",
+			name:    "photo mode alone",
+			args:    func(in string) []string { return []string{"-i", in, "--photo"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+		},
+		{
+			name:    "photo mode with sigma",
+			args:    func(in string) []string { return []string{"-i", in, "--photo", "--sigma", "8"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+		},
+		{
+			name:    "photo mode flag order independence",
+			args:    func(in string) []string { return []string{"--sigma", "8", "--photo", "-i", in} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+		},
+		{
+			name:        "no mode selected",
 			args:        func(in string) []string { return []string{"-i", in} },
 			wantErr:     true,
-			errContains: "sensitivity (-s) is required",
+			errContains: "a mode is required",
 		},
 		{
 			name:        "auto-k with sensitivity is mutually exclusive",
 			args:        func(in string) []string { return []string{"-i", in, "-s", "70", "--auto-k"} },
 			wantErr:     true,
 			errContains: "mutually exclusive",
+		},
+		{
+			name:        "photo with sensitivity is mutually exclusive",
+			args:        func(in string) []string { return []string{"-i", in, "-s", "70", "--photo"} },
+			wantErr:     true,
+			errContains: "mutually exclusive",
+		},
+		{
+			name:        "photo with auto-k is mutually exclusive",
+			args:        func(in string) []string { return []string{"-i", in, "--auto-k", "--photo"} },
+			wantErr:     true,
+			errContains: "mutually exclusive",
+		},
+		{
+			name:        "sigma without photo is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--sigma", "8"} },
+			wantErr:     true,
+			errContains: "--sigma requires --photo",
 		},
 		{
 			name:        "missing input flag",

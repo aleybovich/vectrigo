@@ -120,8 +120,8 @@ cfg.AutoK = true // choose K automatically from the image; ignore Sensitivity
   internal auto-selection ceiling (currently 64 colours) that keeps the multi-`K`
   scan fast. The library raises no error if both are set — `AutoK` simply wins for
   `K`, and `Sensitivity` is ignored for it. The `vectrigo-cli` tool presents the
-  two as a mutually exclusive choice: `--auto-k <img>` for auto-K, `<img>
-  <sensitivity>` for the manual knob, and it errors if you pass both.
+  two as a mutually exclusive choice: `-i <img> --auto-k` for auto-K, `-i <img>
+  -s <sensitivity>` for the manual knob, and it errors if you pass both.
 - **`TurdSize` follows the chosen `K`.** Under `AutoK` the speckle threshold is
   derived from the auto-selected `K` (not from `Sensitivity`), preserving the
   usual "more colours ⇒ less speckle removal" coupling. An explicit `TurdSize`
@@ -148,6 +148,45 @@ would add detail with diminishing returns.
   so different complex photos **differentiate** into distinct, smaller `K` values
   that reflect their complexity — at the cost of coarser output. Push it too high
   and even simple images start losing real colours.
+
+### Photo mode (`Photo` / `PhotoDetail`)
+
+The default pipeline **quantizes** colours — it clusters pixels globally by
+colour, which is crisp on flat / logo art and is the right choice there. For
+**photographic** content, `Photo` mode instead **segments** the image into many
+small, spatially-connected regions (Felzenszwalb graph segmentation), each given
+its own mean colour and traced, preserving local detail far better than global
+quantization.
+
+```go
+cfg := vectrigo.DefaultConfig()
+cfg.Photo = true       // segmentation photo pipeline (best for photos)
+cfg.PhotoDetail = 8    // optional σ_r detail dial; 0 keeps the default (12)
+```
+
+- **Off by default.** `Photo` is `false` in both `DefaultConfig()` and the zero
+  `Config{}`; the quantization output is byte-identical while it stays off.
+- **Either/or with the quantization knobs.** When `Photo` is on, `Sensitivity`,
+  `K`, `AutoK`, `AutoKTau` and `TurdSize` have **no effect** (there is no colour
+  clustering). `AlphaMax`, `Optimize`, `Precision`, `Workers` and `MaxDimensions`
+  still apply.
+- **`PhotoDetail` is the detail dial** (the bilateral range-sigma, σ_r). `0` (a
+  bare `Config{}`, and `DefaultConfig`'s value) means the default `12`; it is
+  clamped to `[4, 60]`. **Lower = punchier / more detail, higher = softer:**
+  `~8` punchy (region count climbs, faces can over-segment), `12` balanced
+  (default), `28+` soft / abstract (low-contrast shading and small text blend
+  away).
+
+On the CLI these are `--photo` and `--sigma`:
+
+```sh
+vectrigo-cli -i photo.png --photo             # => photo.photo.svg (σ_r = 12)
+vectrigo-cli -i photo.png --photo --sigma 8   # => photo.photo.svg (σ_r = 8)
+```
+
+`--photo` is the third mutually-exclusive mode alongside `--sensitivity` and
+`--auto-k` — exactly one is required. `--sigma` is only valid with `--photo`,
+and the output is written next to the input with a `.photo.svg` extension.
 
 ## License
 

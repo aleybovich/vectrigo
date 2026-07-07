@@ -5,20 +5,28 @@
 //
 //	vectrigo-cli -i <image-path> -s <sensitivity>
 //	vectrigo-cli -i <image-path> --auto-k
+//	vectrigo-cli -i <image-path> --photo [--sigma <n>]
 //
 // The input image is given with --input/-i and is required. It must be a PNG,
 // JPEG, or WEBP raster image.
 //
-// The detail level is chosen in one of two mutually exclusive ways:
+// The mode is chosen in one of three mutually exclusive ways:
 //
 //   - --sensitivity/-s takes an integer in [0,100] controlling the primary
-//     detail knob (see [vectrigo.Config.Sensitivity]); higher values produce
-//     more detail.
+//     detail knob for the default colour-quantization pipeline (see
+//     [vectrigo.Config.Sensitivity]); higher values produce more detail. Best
+//     for flat / logo art.
 //   - --auto-k lets the engine choose the colour count K automatically from the
-//     image (see [vectrigo.Config.AutoK]); no sensitivity is then used.
+//     image (see [vectrigo.Config.AutoK]); no sensitivity is then used. Still
+//     the quantization pipeline.
+//   - --photo selects the segmentation PHOTO pipeline (see [vectrigo.Config.Photo]),
+//     which partitions the image into small spatially-connected regions and is
+//     best for photographic content. Its detail dial is --sigma (the bilateral
+//     σ_r "detail" knob, see [vectrigo.Config.PhotoDetail]): ~8 punchy, 12 the
+//     default, 28+ soft. --sigma is only valid together with --photo.
 //
-// Exactly one of --sensitivity or --auto-k must be supplied. Passing both, or
-// neither, is an error.
+// Exactly one of --sensitivity, --auto-k, or --photo must be supplied. Passing
+// more than one, or none, is an error; so is --sigma without --photo.
 //
 // The resulting SVG is written next to the input file. The output name depends
 // on the mode:
@@ -29,12 +37,15 @@
 //   - With --auto-k, the input's extension is replaced by ".svg" (no
 //     sensitivity segment). For example, "photos/street.png" produces
 //     "photos/street.svg".
+//   - With --photo, the input's extension is replaced by ".photo.svg". For
+//     example, "photos/street.png" produces "photos/street.photo.svg".
 package main
 
 import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,27 +56,35 @@ import (
 const usage = `Usage:
   vectrigo-cli -i <image-path> -s <sensitivity>
   vectrigo-cli -i <image-path> --auto-k
+  vectrigo-cli -i <image-path> --photo [--sigma <n>]
 
 Vectorize a raster image (PNG/JPEG/WEBP) into an SVG file.
 
 Options:
   -i, --input <path>          Path to the input raster image (PNG, JPEG, or WEBP). Required.
-  -s, --sensitivity <0-100>   Integer detail knob (higher = more detail).
+  -s, --sensitivity <0-100>   Integer detail knob for quantization (higher = more detail).
       --auto-k                Auto-select the colour count K from the image (no sensitivity).
+      --photo                 Segmentation photo mode, for photographic images.
+      --sigma <n>             Photo-mode detail dial (bilateral σ_r): ~8 punchy, 12 default,
+                              28+ soft. Only valid with --photo; unset uses the default (12).
   -h, --help                  Show this help message.
 
 Modes (mutually exclusive):
-  Supply --sensitivity to use a fixed detail level, OR pass --auto-k to let the
-  engine choose the colour count K automatically from the image. Exactly one is
-  required: passing both, or neither, is an error.
+  Supply --sensitivity for a fixed quantization detail level (best for flat / logo
+  art), OR --auto-k to let the engine choose the colour count K automatically, OR
+  --photo for the segmentation pipeline (best for photographic images). Exactly one
+  is required: passing more than one, or none, is an error. --sigma requires --photo.
 
 The output SVG is written next to the input file:
   - with a sensitivity, the input's extension is replaced by ".<sensitivity>.svg".
   - with --auto-k, the input's extension is replaced by ".svg".
+  - with --photo, the input's extension is replaced by ".photo.svg".
 
 Examples:
-  vectrigo-cli -i photos/street.png -s 70   =>  photos/street.70.svg
-  vectrigo-cli -i photos/street.png --auto-k  =>  photos/street.svg
+  vectrigo-cli -i photos/street.png -s 70        =>  photos/street.70.svg
+  vectrigo-cli -i photos/street.png --auto-k     =>  photos/street.svg
+  vectrigo-cli -i photos/street.png --photo      =>  photos/street.photo.svg
+  vectrigo-cli -i photos/street.png --photo --sigma 8  =>  photos/street.photo.svg
 `
 
 // outputPath derives the output SVG path for a given input image path and
@@ -90,6 +109,17 @@ func autoOutputPath(inputPath string) string {
 	return filepath.Join(dir, stem+".svg")
 }
 
+// photoOutputPath derives the output SVG path for a given input image path in
+// photo (segmentation) mode: the input's directory and base name (with its
+// final extension stripped), followed by ".photo.svg".
+func photoOutputPath(inputPath string) string {
+	dir := filepath.Dir(inputPath)
+	base := filepath.Base(inputPath)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	return filepath.Join(dir, stem+".photo.svg")
+}
+
 // validateSensitivity checks that v is a valid sensitivity in [0,100].
 func validateSensitivity(v int) error {
 	if v < 0 || v > 100 {
@@ -110,6 +140,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		inputPath   string
 		sensitivity int
 		autoK       bool
+		photo       bool
+		sigma       float64
 		help        bool
 	)
 
@@ -122,6 +154,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.IntVar(&sensitivity, "sensitivity", -1, "integer detail knob in [0,100]")
 	fs.IntVar(&sensitivity, "s", -1, "integer detail knob in [0,100] (shorthand)")
 	fs.BoolVar(&autoK, "auto-k", false, "auto-select the colour count K from the image")
+	fs.BoolVar(&photo, "photo", false, "segmentation photo mode, for photographic images")
+	// Default of NaN lets us detect whether --sigma was supplied without
+	// conflating it with any in-band value; an unset --sigma leaves PhotoDetail
+	// at the engine default.
+	fs.Float64Var(&sigma, "sigma", math.NaN(), "photo-mode detail dial (bilateral σ_r)")
 	fs.BoolVar(&help, "help", false, "show this help message")
 	fs.BoolVar(&help, "h", false, "show this help message (shorthand)")
 
@@ -143,11 +180,16 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("unexpected argument(s): %v (all options are named, e.g. -i <path> -s <n>)", fs.Args())
 	}
 
-	// Whether --sensitivity/-s was actually supplied on the command line.
+	// Whether --sensitivity/-s and --sigma were actually supplied on the command
+	// line (both use sentinel defaults, so a value alone can't tell us).
 	sensitivitySet := false
+	sigmaSet := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "sensitivity" || f.Name == "s" {
+		switch f.Name {
+		case "sensitivity", "s":
 			sensitivitySet = true
+		case "sigma":
+			sigmaSet = true
 		}
 	})
 
@@ -156,20 +198,43 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("an input image (-i) is required")
 	}
 
-	if autoK && sensitivitySet {
+	// --sigma only tunes photo mode; it is meaningless without --photo.
+	if sigmaSet && !photo {
 		fmt.Fprint(stderr, usage)
-		return fmt.Errorf("--auto-k and --sensitivity are mutually exclusive")
+		return fmt.Errorf("--sigma requires --photo")
 	}
 
-	if !autoK && !sensitivitySet {
+	// Exactly one of the three modes must be selected.
+	modes := 0
+	if sensitivitySet {
+		modes++
+	}
+	if autoK {
+		modes++
+	}
+	if photo {
+		modes++
+	}
+	if modes > 1 {
 		fmt.Fprint(stderr, usage)
-		return fmt.Errorf("a sensitivity (-s) is required unless --auto-k is given")
+		return fmt.Errorf("--sensitivity, --auto-k and --photo are mutually exclusive; choose exactly one")
+	}
+	if modes == 0 {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("a mode is required: pass one of --sensitivity (-s), --auto-k, or --photo")
 	}
 
 	if sensitivitySet {
 		if err := validateSensitivity(sensitivity); err != nil {
 			return err
 		}
+	}
+
+	// Reject an obviously invalid non-finite σ_r early with a clear message; a
+	// finite (even out-of-band) value is left for the engine to clamp.
+	if photo && sigmaSet && (math.IsNaN(sigma) || math.IsInf(sigma, 0)) {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("--sigma must be a finite number")
 	}
 
 	in, err := os.Open(inputPath)
@@ -180,10 +245,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	var outPath string
 	cfg := vectrigo.DefaultConfig()
-	if autoK {
+	switch {
+	case photo:
+		cfg.Photo = true
+		if sigmaSet {
+			cfg.PhotoDetail = sigma
+		}
+		outPath = photoOutputPath(inputPath)
+	case autoK:
 		cfg.AutoK = true
 		outPath = autoOutputPath(inputPath)
-	} else {
+	default:
 		cfg.Sensitivity = sensitivity
 		outPath = outputPath(inputPath, sensitivity)
 	}

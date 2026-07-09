@@ -33,3 +33,6 @@ go.work.sum
 
 # Compiled command binaries (e.g. bin/vectrigo-cli built via go build -o bin/)
 /bin/
+
+# Local build output of examples/webapp (go build ./examples/webapp)
+/webapp

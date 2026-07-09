@@ -218,8 +218,17 @@ cfg.Gapless = true // trace gapless: no seams, contiguous shapes
 - **All quantization knobs apply** — `Sensitivity`, `AutoK`, `AutoKTau`, `K`
   and `TurdSize` behave exactly as in the default pipeline. `TurdSize` keeps
   its meaning with one twist: a sub-threshold speck is **absorbed** into the
-  neighbouring shape it shares the longest border with (recoloured, not
-  deleted), since deleting it would tear a hole in the tiling.
+  neighbouring shape with the most similar colour (recoloured, not deleted),
+  since deleting it would tear a hole in the tiling.
+- **Built-in near-lossless denoise.** Quantizing photographic gradients
+  scatters huge numbers of 1-2px specks between near-identical adjacent
+  clusters — invisible noise that would otherwise dominate the path count.
+  Gapless absorbs sub-3px specks whose nearest neighbour is colour-close
+  (Euclidean RGB ≤ 25) — typically 2-5× fewer paths, and up to ~16× on flat
+  art whose anti-aliased edges quantize into fragment noise — at no visible
+  cost: higher-contrast specks (eye highlights, letter fragments, fine
+  low-contrast text) are always kept. Set a negative `TurdSize` to disable
+  all absorption for maximum fidelity.
 - **`PhotoSimplify` and `PhotoEdge` apply** (they tune the shared region
   tracer); `PhotoDetail` does not (detail is governed by the quantization
   knobs). `AlphaMax` has no effect — boundaries are smoothed polylines, like

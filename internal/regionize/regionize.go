@@ -1,8 +1,8 @@
 // Package regionize turns a per-pixel colour-cluster label map (the k-means
 // assignment from internal/quantize) into a per-pixel REGION label map suitable
 // for internal/regiontrace: every region is one 4-connected area of a single
-// cluster, and regions smaller than a speckle threshold are absorbed into a
-// neighbour instead of being dropped.
+// cluster, and speckle-sized regions are absorbed into a neighbour instead of
+// being dropped.
 //
 // It is the bridge that lets the quantization pipeline reuse photo mode's
 // gapless shared-boundary tracer. The two pipelines differ in what a "shape"
@@ -16,13 +16,29 @@
 //     identify colours, not regions.
 //
 // Regionize closes that gap: it splits each cluster into its 4-connected
-// components, then merges every component whose pixel area is below minSize
-// into the adjacent component it shares the longest border with. Merging (not
-// deleting) is the gapless analogue of bitrace's TurdSize speckle removal:
-// dropping a speck would tear a hole in the tiling, while absorbing it recolours
-// the speck to its dominant neighbour exactly as paint-over does in the stacked
-// mask pipeline. The threshold matches bitrace's convention: components with
-// area < minSize are absorbed; minSize <= 1 disables absorption.
+// components, then runs up to two ABSORPTION passes. Absorbing (not deleting)
+// is the gapless analogue of bitrace's TurdSize speckle removal: dropping a
+// speck would tear a hole in the tiling, while absorbing recolours the speck
+// into a neighbour exactly as paint-over does in the stacked mask pipeline.
+// The two passes differ in when they fire:
+//
+//   - The MinSize pass is unconditional, mirroring bitrace's TurdSize
+//     convention: every component with pixel area < MinSize is absorbed;
+//     MinSize <= 1 disables the pass.
+//   - The denoise pass is conditional on COLOUR: a component with area <
+//     DenoiseSize is absorbed only when its best neighbour's palette colour is
+//     within DenoiseMaxDist. Quantizing photographic gradients scatters vast
+//     numbers of 1-3px specks between ADJACENT (near-identical) clusters —
+//     invisible noise that dominates the path count — while the rare
+//     high-contrast specks (eye highlights, letter fragments) carry real
+//     detail. The colour condition merges the former and keeps the latter.
+//
+// Both passes pick the target the same way: the adjacent region with the most
+// similar palette colour, tie-broken by longest shared border. (Without a
+// palette, distances are all zero and the ranking degrades to longest border.)
+// Colour-similarity ranking matters for quality even in the unconditional
+// pass — absorbing a skin-tone speck into adjacent hair rather than adjacent
+// skin is what makes naive speckle merging look blotchy.
 //
 // Regionize is deterministic: components are numbered in row-major discovery
 // order, absorption processes candidates in ascending component order with
@@ -30,7 +46,34 @@
 // first-appearance order. Identical inputs always yield identical output.
 package regionize
 
-import "sort"
+import (
+	"image/color"
+	"math"
+	"sort"
+)
+
+// Options configures Regionize's absorption passes. The zero value disables
+// both passes (pure connected-component splitting).
+type Options struct {
+	// MinSize is the unconditional speckle threshold: components with pixel
+	// area < MinSize are absorbed into a neighbour regardless of colour,
+	// matching bitrace's TurdSize convention. <= 1 disables the pass.
+	MinSize int
+
+	// Palette maps cluster id -> colour. It drives the colour-similarity
+	// ranking of absorption targets and the denoise pass's colour condition.
+	// A nil palette leaves ranking to border length and disables denoise.
+	Palette []color.RGBA
+
+	// DenoiseSize is the conditional threshold: components with pixel area <
+	// DenoiseSize are absorbed only if their best neighbour's colour is within
+	// DenoiseMaxDist. <= 1 disables the pass.
+	DenoiseSize int
+
+	// DenoiseMaxDist is the maximum Euclidean RGB distance to the absorbing
+	// neighbour's palette colour for the denoise pass. <= 0 disables the pass.
+	DenoiseMaxDist float64
+}
 
 // Result is Regionize's output, shaped for internal/regiontrace.Trace and
 // internal/assemble.WriteRegions.
@@ -49,11 +92,11 @@ type Result struct {
 	Areas []int
 }
 
-// Regionize splits the cluster label map into 4-connected components and
-// absorbs components with pixel area < minSize into their longest-border
-// neighbour (see the package documentation). clusters has length w*h,
-// row-major; negative entries are transparent and belong to no region.
-func Regionize(clusters []int, w, h, minSize int) Result {
+// Regionize splits the cluster label map into 4-connected components and runs
+// the configured absorption passes (see the package documentation). clusters
+// has length w*h, row-major; negative entries are transparent and belong to no
+// region.
+func Regionize(clusters []int, w, h int, opt Options) Result {
 	n := w * h
 	if w <= 0 || h <= 0 || len(clusters) != n {
 		return Result{}
@@ -65,8 +108,12 @@ func Regionize(clusters []int, w, h, minSize int) Result {
 	for i := range parent {
 		parent[i] = i
 	}
-	if minSize > 1 {
-		absorb(comp, compArea, parent, w, h, minSize)
+	if opt.MinSize > 1 {
+		absorb(comp, compArea, compCluster, parent, w, h, opt.MinSize, math.Inf(1), opt.Palette)
+	}
+	if opt.DenoiseSize > 1 && opt.DenoiseMaxDist > 0 && opt.Palette != nil {
+		absorb(comp, compArea, compCluster, parent, w, h, opt.DenoiseSize,
+			opt.DenoiseMaxDist*opt.DenoiseMaxDist, opt.Palette)
 	}
 
 	return compact(clusters, comp, compArea, compCluster, parent)
@@ -120,20 +167,38 @@ func components(clusters []int, w, h int) (comp, compArea, compCluster []int) {
 	return comp, compArea, compCluster
 }
 
-// border is one directed "tiny component -> neighbouring component" adjacency
-// with the length (in unit pixel edges) of their shared border.
+// border is one directed "tiny component -> neighbouring component" adjacency:
+// the length (in unit pixel edges) of their shared border and the squared RGB
+// distance between their clusters' palette colours.
 type border struct {
 	tiny, next, length int
+	distSq             float64
 }
 
-// absorb repeatedly merges every component group whose total area is below
-// minSize into the neighbouring group it shares the longest border with,
-// mutating parent (a union-find forest over component ids; the absorbing root
-// survives, so it keeps its own cluster) and compArea (per-root accumulated
-// area). It runs in rounds — a merged group may still be tiny, or two tiny
-// groups may merge and cross the threshold — until no eligible merge remains.
-// Groups with no opaque neighbour (isolated islands) are kept as-is.
-func absorb(comp, compArea, parent []int, w, h, minSize int) {
+// paletteDistSq returns the squared Euclidean RGB distance between clusters a
+// and b, or 0 when the palette does not cover them (degrading the target
+// ranking to border length alone).
+func paletteDistSq(palette []color.RGBA, a, b int) float64 {
+	if a < 0 || b < 0 || a >= len(palette) || b >= len(palette) {
+		return 0
+	}
+	dr := float64(palette[a].R) - float64(palette[b].R)
+	dg := float64(palette[a].G) - float64(palette[b].G)
+	db := float64(palette[a].B) - float64(palette[b].B)
+	return dr*dr + dg*dg + db*db
+}
+
+// absorb repeatedly merges component groups whose total area is below size
+// into their best neighbouring group — nearest palette colour first, longest
+// shared border as the tie-break — provided that neighbour's colour is within
+// maxDistSq (pass math.Inf(1) for the unconditional pass). It mutates parent
+// (a union-find forest over component ids; the absorbing root survives, so it
+// keeps its own cluster) and compArea (per-root accumulated area). It runs in
+// rounds — a merged group may still be tiny, or two tiny groups may merge and
+// cross the threshold — until no eligible merge remains. Groups with no opaque
+// neighbour (isolated islands), and groups whose closest neighbour is beyond
+// maxDistSq, are kept as-is.
+func absorb(comp, compArea, compCluster, parent []int, w, h, size int, maxDistSq float64, palette []color.RGBA) {
 	find := func(c int) int {
 		for parent[c] != c {
 			parent[c] = parent[parent[c]]
@@ -151,10 +216,10 @@ func absorb(comp, compArea, parent []int, w, h, minSize int) {
 			if ra == rb {
 				return
 			}
-			if compArea[ra] < minSize {
+			if compArea[ra] < size {
 				lengths[[2]int{ra, rb}]++
 			}
-			if compArea[rb] < minSize {
+			if compArea[rb] < size {
 				lengths[[2]int{rb, ra}]++
 			}
 		}
@@ -178,15 +243,23 @@ func absorb(comp, compArea, parent []int, w, h, minSize int) {
 		}
 
 		// Deterministic merge order: sort the snapshot's adjacencies so every
-		// tiny root's candidates are contiguous and its best (longest border,
-		// then lowest neighbour id) comes first.
+		// tiny root's candidates are contiguous and its best (nearest colour,
+		// then longest border, then lowest neighbour id) comes first.
 		borders := make([]border, 0, len(lengths))
 		for k, l := range lengths {
-			borders = append(borders, border{tiny: k[0], next: k[1], length: l})
+			borders = append(borders, border{
+				tiny:   k[0],
+				next:   k[1],
+				length: l,
+				distSq: paletteDistSq(palette, compCluster[k[0]], compCluster[k[1]]),
+			})
 		}
 		sort.Slice(borders, func(i, j int) bool {
 			if borders[i].tiny != borders[j].tiny {
 				return borders[i].tiny < borders[j].tiny
+			}
+			if borders[i].distSq != borders[j].distSq {
+				return borders[i].distSq < borders[j].distSq
 			}
 			if borders[i].length != borders[j].length {
 				return borders[i].length > borders[j].length
@@ -199,13 +272,20 @@ func absorb(comp, compArea, parent []int, w, h, minSize int) {
 			t := borders[i].tiny
 			// The first entry for t is its best candidate from the snapshot.
 			best := borders[i].next
+			bestDistSq := borders[i].distSq
 			for i < len(borders) && borders[i].tiny == t {
 				i++
+			}
+			// The candidates are colour-ranked, so if the best is out of colour
+			// range every other neighbour is too: the speck is kept (it carries
+			// contrast the denoise pass must not erase).
+			if bestDistSq > maxDistSq {
+				continue
 			}
 			// Re-resolve through this round's earlier merges: skip roots already
 			// absorbed (or grown past the threshold), and never self-merge.
 			rt := find(t)
-			if rt != t || compArea[rt] >= minSize {
+			if rt != t || compArea[rt] >= size {
 				continue
 			}
 			rb := find(best)

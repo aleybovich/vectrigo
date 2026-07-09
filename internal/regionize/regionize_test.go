@@ -1,6 +1,7 @@
 package regionize
 
 import (
+	"image/color"
 	"reflect"
 	"testing"
 )
@@ -32,7 +33,7 @@ func TestComponentsSplitSameCluster(t *testing.T) {
 		"00100",
 		"00100",
 	)
-	res := Regionize(clusters, w, h, 0)
+	res := Regionize(clusters, w, h, Options{MinSize: 0})
 
 	if res.NumRegions != 3 {
 		t.Fatalf("NumRegions = %d, want 3 (left 0s, middle 1s, right 0s)", res.NumRegions)
@@ -57,7 +58,7 @@ func TestDiagonalIsNotConnected(t *testing.T) {
 		"10",
 		"01",
 	)
-	res := Regionize(clusters, w, h, 0)
+	res := Regionize(clusters, w, h, Options{MinSize: 0})
 	if res.NumRegions != 4 {
 		t.Fatalf("NumRegions = %d, want 4 (diagonals are not connected)", res.NumRegions)
 	}
@@ -71,7 +72,7 @@ func TestTransparentPixels(t *testing.T) {
 		"...",
 		"0.0",
 	)
-	res := Regionize(clusters, w, h, 0)
+	res := Regionize(clusters, w, h, Options{MinSize: 0})
 	if res.NumRegions != 4 {
 		t.Fatalf("NumRegions = %d, want 4", res.NumRegions)
 	}
@@ -100,7 +101,7 @@ func TestAbsorbTinyIntoLongestBorderNeighbour(t *testing.T) {
 		"121",
 		"101",
 	)
-	res := Regionize(clusters, w, h, 2)
+	res := Regionize(clusters, w, h, Options{MinSize: 2})
 
 	// The 2 must be absorbed into the 1-region (3 shared edges) not the 0
 	// (1 shared edge)... the 0 is itself tiny and is absorbed too.
@@ -129,13 +130,13 @@ func TestAbsorbThresholdMatchesBitrace(t *testing.T) {
 	)
 
 	// The 2-pixel 1-component survives minSize 2 exactly.
-	res := Regionize(clusters, w, h, 2)
+	res := Regionize(clusters, w, h, Options{MinSize: 2})
 	if res.NumRegions != 2 {
 		t.Fatalf("minSize=2: NumRegions = %d, want 2 (area 2 >= 2 survives)", res.NumRegions)
 	}
 
 	// ...and is absorbed at minSize 3.
-	res = Regionize(clusters, w, h, 3)
+	res = Regionize(clusters, w, h, Options{MinSize: 3})
 	if res.NumRegions != 1 {
 		t.Fatalf("minSize=3: NumRegions = %d, want 1 (area 2 < 3 absorbed)", res.NumRegions)
 	}
@@ -145,7 +146,7 @@ func TestAbsorbThresholdMatchesBitrace(t *testing.T) {
 
 	// minSize 0 and 1 keep everything.
 	for _, ms := range []int{0, 1} {
-		if got := Regionize(clusters, w, h, ms).NumRegions; got != 2 {
+		if got := Regionize(clusters, w, h, Options{MinSize: ms}).NumRegions; got != 2 {
 			t.Errorf("minSize=%d: NumRegions = %d, want 2 (absorption disabled)", ms, got)
 		}
 	}
@@ -160,7 +161,7 @@ func TestAbsorbChain(t *testing.T) {
 		"01200",
 		"00000",
 	)
-	res := Regionize(clusters, w, h, 3)
+	res := Regionize(clusters, w, h, Options{MinSize: 3})
 
 	// Both specks (area 1 each) are below 3; whether they first merge with
 	// each other or straight into the background, all pixels must end in ONE
@@ -185,7 +186,7 @@ func TestIsolatedTinyIslandKept(t *testing.T) {
 		"...",
 		"..1",
 	)
-	res := Regionize(clusters, w, h, 5)
+	res := Regionize(clusters, w, h, Options{MinSize: 5})
 	if res.NumRegions != 2 {
 		t.Fatalf("NumRegions = %d, want 2 (islands kept)", res.NumRegions)
 	}
@@ -209,7 +210,7 @@ func TestTilingInvariant(t *testing.T) {
 		"3.....0",
 	)
 	for _, minSize := range []int{0, 2, 4, 100} {
-		res := Regionize(clusters, w, h, minSize)
+		res := Regionize(clusters, w, h, Options{MinSize: minSize})
 		if len(res.Cluster) != res.NumRegions || len(res.Areas) != res.NumRegions {
 			t.Fatalf("minSize=%d: Cluster/Areas length %d/%d, want NumRegions %d",
 				minSize, len(res.Cluster), len(res.Areas), res.NumRegions)
@@ -244,9 +245,9 @@ func TestDeterminism(t *testing.T) {
 		"554433221100",
 		"5.4.3.2.1.00",
 	)
-	first := Regionize(clusters, w, h, 3)
+	first := Regionize(clusters, w, h, Options{MinSize: 3})
 	for i := 0; i < 20; i++ {
-		if got := Regionize(clusters, w, h, 3); !reflect.DeepEqual(got, first) {
+		if got := Regionize(clusters, w, h, Options{MinSize: 3}); !reflect.DeepEqual(got, first) {
 			t.Fatalf("run %d differs from first run:\n%+v\nvs\n%+v", i, got, first)
 		}
 	}
@@ -255,15 +256,15 @@ func TestDeterminism(t *testing.T) {
 // TestDegenerateInputs pins the nil-safety contract for empty and mismatched
 // inputs.
 func TestDegenerateInputs(t *testing.T) {
-	if res := Regionize(nil, 0, 0, 2); res.NumRegions != 0 || res.Labels != nil {
+	if res := Regionize(nil, 0, 0, Options{MinSize: 2}); res.NumRegions != 0 || res.Labels != nil {
 		t.Errorf("empty input: got %+v, want zero Result", res)
 	}
-	if res := Regionize([]int{0, 0}, 3, 3, 2); res.NumRegions != 0 || res.Labels != nil {
+	if res := Regionize([]int{0, 0}, 3, 3, Options{MinSize: 2}); res.NumRegions != 0 || res.Labels != nil {
 		t.Errorf("mismatched length: got %+v, want zero Result", res)
 	}
 	// All-transparent input: zero regions, labels all -1.
 	clusters, w, h := grid("..", "..")
-	res := Regionize(clusters, w, h, 2)
+	res := Regionize(clusters, w, h, Options{MinSize: 2})
 	if res.NumRegions != 0 {
 		t.Errorf("all-transparent: NumRegions = %d, want 0", res.NumRegions)
 	}
@@ -271,5 +272,72 @@ func TestDegenerateInputs(t *testing.T) {
 		if lb != -1 {
 			t.Errorf("all-transparent: label[%d] = %d, want -1", i, lb)
 		}
+	}
+}
+
+// TestAbsorbPrefersNearestColour checks the target ranking: with a palette,
+// a speck is absorbed into the adjacent region with the most SIMILAR colour
+// even when a different-coloured neighbour shares a longer border. This is
+// what keeps unconditional (TurdSize) absorption from blotching: a skin-tone
+// speck joins adjacent skin, not adjacent hair.
+func TestAbsorbPrefersNearestColour(t *testing.T) {
+	clusters, w, h := grid(
+		"001",
+		"021",
+		"001",
+	)
+	// The 2-speck shares 3 border edges with cluster 0 but only 1 with
+	// cluster 1; its colour is far from 0 and near 1.
+	palette := []color.RGBA{
+		{R: 0, G: 0, B: 0, A: 255},
+		{R: 200, G: 0, B: 0, A: 255},
+		{R: 220, G: 0, B: 0, A: 255},
+	}
+	res := Regionize(clusters, w, h, Options{MinSize: 2, Palette: palette})
+
+	speck := res.Labels[4] // pixel (1,1)
+	if got := res.Cluster[speck]; got != 1 {
+		t.Errorf("speck absorbed into cluster %d, want 1 (nearest colour beats longest border)", got)
+	}
+	if res.Labels[4] != res.Labels[2] {
+		t.Error("speck did not join the cluster-1 region")
+	}
+}
+
+// TestDenoiseColourCondition checks the conditional pass: a sub-DenoiseSize
+// speck is absorbed only when its best neighbour is within DenoiseMaxDist —
+// low-contrast quantization dither merges, high-contrast detail (an eye
+// highlight) survives.
+func TestDenoiseColourCondition(t *testing.T) {
+	clusters, w, h := grid(
+		"000",
+		"010",
+		"000",
+	)
+	near := []color.RGBA{{R: 100, G: 100, B: 100, A: 255}, {R: 120, G: 100, B: 100, A: 255}}
+	far := []color.RGBA{{R: 100, G: 100, B: 100, A: 255}, {R: 255, G: 255, B: 255, A: 255}}
+
+	// Near-colour speck: merged.
+	res := Regionize(clusters, w, h, Options{DenoiseSize: 3, DenoiseMaxDist: 30, Palette: near})
+	if res.NumRegions != 1 {
+		t.Errorf("near-colour speck: NumRegions = %d, want 1 (merged)", res.NumRegions)
+	}
+
+	// Far-colour speck: kept.
+	res = Regionize(clusters, w, h, Options{DenoiseSize: 3, DenoiseMaxDist: 30, Palette: far})
+	if res.NumRegions != 2 {
+		t.Errorf("far-colour speck: NumRegions = %d, want 2 (kept)", res.NumRegions)
+	}
+
+	// Speck at or above DenoiseSize: kept even when colour-close.
+	res = Regionize(clusters, w, h, Options{DenoiseSize: 1, DenoiseMaxDist: 30, Palette: near})
+	if res.NumRegions != 2 {
+		t.Errorf("DenoiseSize=1: NumRegions = %d, want 2 (pass disabled)", res.NumRegions)
+	}
+
+	// No palette: the denoise pass is off regardless of the other options.
+	res = Regionize(clusters, w, h, Options{DenoiseSize: 3, DenoiseMaxDist: 30})
+	if res.NumRegions != 2 {
+		t.Errorf("nil palette: NumRegions = %d, want 2 (denoise disabled)", res.NumRegions)
 	}
 }

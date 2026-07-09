@@ -22,6 +22,32 @@ import (
 // keeping the exact shared-boundary tiling that makes photo mode seam-free.
 const photoBoundarySmooth = 3
 
+// gaplessDenoiseSize and gaplessDenoiseMaxDist tune gapless mode's
+// colour-conditional speckle absorption ([regionize.Options]): components
+// smaller than gaplessDenoiseSize pixels are absorbed into their
+// nearest-colour neighbour when that neighbour's palette colour is within
+// gaplessDenoiseMaxDist (Euclidean RGB). They are tuned internal constants,
+// not public knobs: quantizing photographic gradients scatters enormous
+// numbers of 1-2px specks between near-identical adjacent clusters —
+// invisible noise that can multiply the region count tenfold — while
+// high-contrast specks (eye highlights, letter fragments) carry real detail.
+// The size bound keeps this strictly a speckle pass and the colour bound
+// keeps it visually near-lossless. Both bounds are deliberately conservative,
+// validated on three content types: a busy painting (1.8x fewer paths; small
+// faces, glasses and signage all survive), a synthetic low-contrast scene
+// dense with fine detail (4.5x; single-pixel-stroke text of ~20 RGB contrast
+// survives — at dist 35 it visibly erodes, at 60 it is destroyed), and a flat
+// anti-aliased logo (16x, the same 32 paths at dist 25 as at 60: its noise is
+// 1-2px fragments of the anti-aliasing bands, whose nearest neighbour is the
+// adjacent band step, always colour-close). Larger sizes blotch
+// small low-contrast features (a 60px face's wrinkles ARE 3-8px specks of
+// adjacent skin clusters). An explicit negative Config.TurdSize (the
+// "force-disable speckle removal" sentinel) turns the pass off.
+const (
+	gaplessDenoiseSize    = 3
+	gaplessDenoiseMaxDist = 25
+)
+
 // Vectorize reads a raster image (PNG/JPEG/WEBP) from r, converts it to SVG
 // using cfg, and writes the SVG document to w. It is stateless and safe for
 // concurrent use.
@@ -131,7 +157,17 @@ func (e *Engine) convertGapless(img normalize.Image, w io.Writer) error {
 		return fmt.Errorf("vectrigo: quantize: %w", err)
 	}
 
-	res := regionize.Regionize(labels, b.Dx(), b.Dy(), turd)
+	// The unconditional pass mirrors TurdSize; the colour-conditional denoise
+	// pass collapses the low-contrast quantization dither that dominates the
+	// region count on photographic content while keeping high-contrast specks
+	// (see regionize). An explicit negative TurdSize — the historical
+	// "force-disable speckle removal" sentinel — disables both.
+	opt := regionize.Options{MinSize: turd, Palette: palette}
+	if e.cfg.TurdSize >= 0 {
+		opt.DenoiseSize = gaplessDenoiseSize
+		opt.DenoiseMaxDist = gaplessDenoiseMaxDist
+	}
+	res := regionize.Regionize(labels, b.Dx(), b.Dy(), opt)
 
 	// Region colours come straight from the cluster palette: same posterized
 	// look as the mask pipeline, just split into per-area shapes.

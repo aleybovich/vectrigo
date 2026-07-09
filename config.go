@@ -202,11 +202,22 @@ type Config struct {
 	//     same-coloured area across the whole image into a single element.
 	//
 	// TurdSize keeps its meaning with one twist: a speck below the threshold is
-	// ABSORBED into the neighbouring shape it shares the longest border with
+	// ABSORBED into the neighbouring shape with the most similar colour
 	// (recoloured, not deleted), since deleting it would tear a hole in the
-	// tiling. Boundaries are emitted as smoothed polylines (like photo mode)
-	// rather than fitted Bézier curves, so AlphaMax has no effect; PhotoSimplify
-	// and PhotoEdge apply, PhotoDetail does not (detail is governed by the
+	// tiling. Gapless additionally runs a built-in, visually near-lossless
+	// speckle DENOISE: quantizing photographic gradients scatters enormous
+	// numbers of 1-2px specks between near-identical adjacent clusters, so
+	// sub-3px specks whose nearest neighbour colour is close (Euclidean RGB
+	// distance <= 25) are absorbed too — typically 2-5x fewer paths (up to
+	// ~16x on flat art, whose anti-aliased edges quantize into fragment
+	// noise) at no visible cost, while higher-contrast specks (eye
+	// highlights, letter fragments, fine low-contrast text) are always kept.
+	// A negative TurdSize (the force-disable sentinel) disables BOTH
+	// absorption passes for maximum fidelity.
+	//
+	// Boundaries are emitted as smoothed polylines (like photo mode) rather
+	// than fitted Bézier curves, so AlphaMax has no effect; PhotoSimplify and
+	// PhotoEdge apply, PhotoDetail does not (detail is governed by the
 	// quantization knobs). Precedence: Photo wins when both Photo and Gapless
 	// are set. When Gapless is false the mask pipeline is untouched and output
 	// stays byte-identical to the historical engine.

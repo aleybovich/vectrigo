@@ -39,6 +39,21 @@ self-contained server.
    palette.
 6. **Download** the SVG.
 
+## Presets
+
+The dropdown above the levers applies a tuned starting point; touching any
+lever afterwards switches back to **Custom** so you always know whether you're
+on a preset or your own mix.
+
+| Preset | Configuration | Best for |
+| --- | --- | --- |
+| Logo / flat graphics | Auto-K, mask tracing | flat art: natural colour count, smooth Bézier curves |
+| Illustration | Sensitivity 60 + Gapless + subtle simplify | posters / cartoons: posterized colours, contiguous shapes |
+| Photo | Photo mode defaults (σ_r 12, crisp) | photographic content, balanced |
+| Photo — high detail | Auto-K + Gapless + subtle simplify | sharpest faces and small text; larger files |
+| Photo — compact | Photo mode + aggressive simplify | smallest files, coarser shapes |
+| Maximum fidelity | Auto-K + Gapless, speckle −1, no simplify | archival trace: every speck kept, biggest files |
+
 ## Levers and when they apply
 
 The three pipelines are mutually exclusive; **Gapless** is a modifier on the two

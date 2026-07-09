@@ -141,6 +141,23 @@
       <img class="thumb" id="thumb" alt="original preview">
     </div>
 
+    <!-- Preset -->
+    <div class="group">
+      <h2>Preset</h2>
+      <div class="field">
+        <select id="preset">
+          <option value="custom">Custom (manual levers)</option>
+          <option value="logo">Logo / flat graphics</option>
+          <option value="illustration">Illustration</option>
+          <option value="photo">Photo</option>
+          <option value="photoHi">Photo — high detail</option>
+          <option value="photoCompact">Photo — compact</option>
+          <option value="maxFidelity">Maximum fidelity</option>
+        </select>
+        <div class="hint" id="presetHint">Pick a starting point; any lever change switches back to Custom.</div>
+      </div>
+    </div>
+
     <!-- Pipeline -->
     <div class="group">
       <h2>Pipeline</h2>
@@ -345,9 +362,83 @@ $("pipeSeg").addEventListener("click", e => {
   pipeline = b.dataset.pipe;
   [...$("pipeSeg").children].forEach(x => x.classList.toggle("on", x === b));
   applyRelevance();
+  markCustom();
 });
 $("gapless").addEventListener("change", applyRelevance);
 applyRelevance();
+
+// ---- presets ----
+// Each preset resets every lever to its default, then applies its overrides.
+const PRESET_HINT_DEFAULT = "Pick a starting point; any lever change switches back to Custom.";
+const PRESETS = {
+  logo: {
+    pipe: "autok", set: {},
+    hint: "Flat art: auto-K finds the natural colour count and Bézier mask tracing keeps curves smooth and scalable.",
+  },
+  illustration: {
+    pipe: "sensitivity", set: { sensitivity: 60, gapless: true, photoSimplify: 0.35 },
+    hint: "Posters, cartoons, digital paintings: bold posterized colours, seam-free contiguous shapes.",
+  },
+  photo: {
+    pipe: "photo", set: {},
+    hint: "Photographic content: region segmentation with per-region mean colours (the classic photo mode).",
+  },
+  photoHi: {
+    pipe: "autok", set: { gapless: true, photoSimplify: 0.35 },
+    hint: "Sharpest faces and text: auto-K colours traced gapless. Larger files, best detail.",
+  },
+  photoCompact: {
+    pipe: "photo", set: { photoSimplify: 1.0 },
+    hint: "Photo mode with aggressive simplification: the smallest files, visibly coarser shapes.",
+  },
+  maxFidelity: {
+    pipe: "autok", set: { gapless: true, turdSize: -1 },
+    hint: "Every speck kept, nothing simplified: the most faithful trace and by far the biggest files.",
+  },
+};
+// Lever defaults a preset starts from before its own overrides.
+const LEVER_DEFAULTS = {
+  sensitivity: 50, autoKTau: 0.02, photoDetail: 12, k: 0, turdSize: 0,
+  photoSimplify: 0, alphaMax: 1.0, precision: 2,
+};
+let applyingPreset = false;
+
+function applyPreset(name) {
+  const p = PRESETS[name];
+  if (!p) { $("presetHint").textContent = PRESET_HINT_DEFAULT; return; }
+  applyingPreset = true;
+  const vals = Object.assign({}, LEVER_DEFAULTS, p.set);
+  for (const [id, v] of Object.entries(vals)) {
+    if (id === "gapless") continue;
+    const el = $(id);
+    el.value = v;
+    el.dispatchEvent(new Event("input")); // refresh the value label
+  }
+  $("gapless").checked = !!p.set.gapless;
+  $("photoEdge").value = p.set.photoEdge || "crisp";
+  $("optimize").checked = true;
+  pipeline = p.pipe;
+  [...$("pipeSeg").children].forEach(x => x.classList.toggle("on", x.dataset.pipe === p.pipe));
+  applyRelevance();
+  $("presetHint").textContent = p.hint;
+  applyingPreset = false;
+}
+$("preset").addEventListener("change", e => applyPreset(e.target.value));
+
+// Any manual lever change means the settings no longer match the preset.
+function markCustom() {
+  if (applyingPreset) return;
+  if ($("preset").value !== "custom") {
+    $("preset").value = "custom";
+    $("presetHint").textContent = PRESET_HINT_DEFAULT;
+  }
+}
+["input", "change"].forEach(ev =>
+  document.querySelector("aside").addEventListener(ev, e => {
+    if (e.target.id === "preset" || e.target.id === "file") return;
+    markCustom();
+  })
+);
 
 // ---- upload ----
 const drop = $("drop");

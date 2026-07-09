@@ -372,8 +372,8 @@ applyRelevance();
 const PRESET_HINT_DEFAULT = "Pick a starting point; any lever change switches back to Custom.";
 const PRESETS = {
   logo: {
-    pipe: "autok", set: {},
-    hint: "Flat art: auto-K finds the natural colour count and Bézier mask tracing keeps curves smooth and scalable.",
+    pipe: "sensitivity", set: { sensitivity: 0, gapless: true, photoSimplify: 0.35 },
+    hint: "Flat art: maximum posterization (few colours), seam-free contiguous shapes.",
   },
   illustration: {
     pipe: "sensitivity", set: { sensitivity: 60, gapless: true, photoSimplify: 0.35 },

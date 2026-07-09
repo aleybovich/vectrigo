@@ -47,7 +47,7 @@ on a preset or your own mix.
 
 | Preset | Configuration | Best for |
 | --- | --- | --- |
-| Logo / flat graphics | Auto-K, mask tracing | flat art: natural colour count, smooth Bézier curves |
+| Logo / flat graphics | Sensitivity 0 + Gapless + subtle simplify | flat art: few posterized colours, seam-free contiguous shapes |
 | Illustration | Sensitivity 60 + Gapless + subtle simplify | posters / cartoons: posterized colours, contiguous shapes |
 | Photo | Photo mode defaults (σ_r 12, crisp) | photographic content, balanced |
 | Photo — high detail | Auto-K + Gapless + subtle simplify | sharpest faces and small text; larger files |

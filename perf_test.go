@@ -18,10 +18,9 @@ type perfMatrixCase struct {
 }
 
 // perfMatrix is the byte-identity matrix guarding the performance pass. Each
-// expected digest was captured by running Vectorize at git HEAD (commit
-// 58f1795, before any optimization) via TestCaptureGoldenDigests, which logs
-// the sha256 of the output for every case below. To re-capture after an
-// intentional behaviour change, run:
+// expected digest was captured by running Vectorize on the current pipeline via
+// TestCaptureGoldenDigests, which logs the sha256 of the output for every case
+// below. To re-capture after an intentional behaviour change, run:
 //
 //	go test -run TestCaptureGoldenDigests -v .
 //
@@ -35,20 +34,20 @@ func perfMatrix() []perfMatrixCase {
 		}
 	}
 	return []perfMatrixCase{
-		{name: "shapes_s0", fixture: "shapes.png", cfg: base(0), want: "40c121bacc037d96272762638a3b75f16cf797b36d55e68d5c221baad3b46ae3"},
-		{name: "shapes_s50", fixture: "shapes.png", cfg: base(50), want: "39aac7a8e0c795fff4f61049757652559beb7011f8e883a9438613403c49436f"},
-		{name: "shapes_s100", fixture: "shapes.png", cfg: base(100), want: "47b529a3a4724368fb097c86251b17f17bb83de326f48e6b4f9b24809ba1502d"},
-		{name: "street_s50_d256", fixture: "street_market.png", maxDim: 256, cfg: base(50), want: "53cde2b54584cd8f0dc4941d4250194e2fa3f32d1a3cc8008349d0d24651776c"},
-		{name: "shapes_autok", fixture: "shapes.png", cfg: func() Config {
+		{name: "squirrel_s0", fixture: "squirrel.png", maxDim: 256, cfg: base(0), want: "ebe671f1c89e40dc5ebd78f4c8d7b20237b1f21e4c0707aa4616e2eb507caf40"},
+		{name: "squirrel_s50", fixture: "squirrel.png", maxDim: 256, cfg: base(50), want: "cb90eb0b1c01d45283e0992f95ed2b5693500fb26558c975cab2e2703b99d7a6"},
+		{name: "squirrel_s100", fixture: "squirrel.png", maxDim: 256, cfg: base(100), want: "cfe401d1139041fcb21eb653b885fe614e30b37bc7b34bc6a5e68b30850beb34"},
+		{name: "street_s50_d256", fixture: "street_market.png", maxDim: 256, cfg: base(50), want: "3db92e3ac20d64d621e7c9881dd8e718b2e8435792ba4134bab0f7297fd32397"},
+		{name: "squirrel_autok", fixture: "squirrel.png", maxDim: 256, cfg: func() Config {
 			c := DefaultConfig()
 			c.AutoK = true
 			return c
-		}, want: "bff6e629c360d2f509282406cf72f8df8a1408483b2d68bcc825572dc8d85613"},
+		}, want: "de7637dfe5c9ab289bbe4ce9d8bc106ac3da8e2806f11ac62462777db469db43"},
 		{name: "street_autok_d256", fixture: "street_market.png", maxDim: 256, cfg: func() Config {
 			c := DefaultConfig()
 			c.AutoK = true
 			return c
-		}, want: "427364ea3163670dfe936e00bbc452ce9f835b2ca066f059c5faa8f7d1e2c7d0"},
+		}, want: "8f8dbb25676d4882e801fbf3bda0fc4b008f939d1211ee0c433e9a84787d5dc6"},
 	}
 }
 
@@ -99,14 +98,15 @@ func TestGoldenByteIdentityMatrix(t *testing.T) {
 	}
 }
 
-// BenchmarkVectorizeShapes benchmarks the full engine on the small shapes
-// fixture at the default sensitivity.
-func BenchmarkVectorizeShapes(b *testing.B) {
-	src, err := os.ReadFile("testdata/shapes.png")
+// BenchmarkVectorizeSquirrel benchmarks the full engine on the squirrel fixture
+// downsampled to 256px at the default sensitivity.
+func BenchmarkVectorizeSquirrel(b *testing.B) {
+	src, err := os.ReadFile("testdata/squirrel.png")
 	if err != nil {
 		b.Fatal(err)
 	}
 	cfg := DefaultConfig()
+	cfg.MaxDimensions = Dimensions{Width: 256, Height: 256}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

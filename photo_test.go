@@ -147,10 +147,11 @@ func TestPhotoModeStrokeEdge(t *testing.T) {
 // TestPhotoDetailInertWhenPhotoFalse asserts PhotoDetail has NO effect on output
 // while Photo is false — the quantization path must ignore it entirely.
 func TestPhotoDetailInertWhenPhotoFalse(t *testing.T) {
-	data := fixture(t, "shapes.png")
+	data := fixture(t, "squirrel.png")
 
 	base := DefaultConfig()
 	base.Photo = false
+	base.MaxDimensions = Dimensions{Width: 256, Height: 256} // downsample for speed
 
 	cfgA := base
 	cfgA.PhotoDetail = 5

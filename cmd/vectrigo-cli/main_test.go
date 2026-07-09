@@ -11,7 +11,7 @@ import (
 )
 
 // fixturePath is the committed sample image used for the end-to-end test.
-const fixturePath = "../../testdata/shapes.png"
+const fixturePath = "../../testdata/squirrel.png"
 
 func TestOutputPath(t *testing.T) {
 	tests := []struct {
@@ -40,9 +40,9 @@ func TestOutputPath(t *testing.T) {
 		},
 		{
 			name:        "sensitivity 100",
-			input:       "/data/images/shapes.png",
+			input:       "/data/images/squirrel.png",
 			sensitivity: 100,
-			want:        "/data/images/shapes.100.svg",
+			want:        "/data/images/squirrel.100.svg",
 		},
 		{
 			name:        "multiple dots in name only strips final extension",
@@ -186,11 +186,11 @@ func TestValidateSensitivity(t *testing.T) {
 	}
 }
 
-// TestRunEndToEnd exercises the full CLI on the committed shapes.png fixture,
+// TestRunEndToEnd exercises the full CLI on the committed squirrel.png fixture,
 // copied into a temp dir so the generated output never lands in testdata.
 func TestRunEndToEnd(t *testing.T) {
 	dir := t.TempDir()
-	inputPath := filepath.Join(dir, "shapes.png")
+	inputPath := filepath.Join(dir, "squirrel.png")
 	copyFile(t, fixturePath, inputPath)
 
 	var stdout, stderr bytes.Buffer
@@ -199,7 +199,7 @@ func TestRunEndToEnd(t *testing.T) {
 		t.Fatalf("run() returned error: %v (stderr: %s)", err, stderr.String())
 	}
 
-	wantOut := filepath.Join(dir, "shapes.60.svg")
+	wantOut := filepath.Join(dir, "squirrel.60.svg")
 	gotOut := strings.TrimSpace(stdout.String())
 	if gotOut != wantOut {
 		t.Fatalf("stdout = %q, want %q", gotOut, wantOut)
@@ -221,7 +221,7 @@ func TestRunAutoKEndToEnd(t *testing.T) {
 	} {
 		t.Run(form.name, func(t *testing.T) {
 			dir := t.TempDir()
-			inputPath := filepath.Join(dir, "shapes.png")
+			inputPath := filepath.Join(dir, "squirrel.png")
 			copyFile(t, fixturePath, inputPath)
 
 			var stdout, stderr bytes.Buffer
@@ -230,7 +230,7 @@ func TestRunAutoKEndToEnd(t *testing.T) {
 				t.Fatalf("run(%v) returned error: %v (stderr: %s)", runArgs, err, stderr.String())
 			}
 
-			wantOut := filepath.Join(dir, "shapes.svg")
+			wantOut := filepath.Join(dir, "squirrel.svg")
 			gotOut := strings.TrimSpace(stdout.String())
 			if gotOut != wantOut {
 				t.Fatalf("stdout = %q, want %q", gotOut, wantOut)
@@ -255,62 +255,62 @@ func TestRunModeMatrix(t *testing.T) {
 		{
 			name:    "fixed K with short flags",
 			args:    func(in string) []string { return []string{"-i", in, "-s", "70"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.70.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.70.svg") },
 		},
 		{
 			name:    "fixed K with long flags",
 			args:    func(in string) []string { return []string{"--input", in, "--sensitivity", "70"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.70.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.70.svg") },
 		},
 		{
 			name:    "fixed K flag order independence",
 			args:    func(in string) []string { return []string{"-s", "70", "-i", in} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.70.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.70.svg") },
 		},
 		{
 			name:    "auto-K with short input flag",
 			args:    func(in string) []string { return []string{"-i", in, "--auto-k"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.svg") },
 		},
 		{
 			name:    "sensitivity zero is valid",
 			args:    func(in string) []string { return []string{"-i", in, "-s", "0"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.0.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.0.svg") },
 		},
 		{
 			name:    "photo mode alone",
 			args:    func(in string) []string { return []string{"-i", in, "--photo"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
 			name:    "photo mode with sigma",
 			args:    func(in string) []string { return []string{"-i", in, "--photo", "--sigma", "8"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
 			name:    "photo mode flag order independence",
 			args:    func(in string) []string { return []string{"--sigma", "8", "--photo", "-i", in} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
 			name:    "photo mode with simplify subtle",
 			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "subtle"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
 			name:    "photo mode with simplify aggressive",
 			args:    func(in string) []string { return []string{"-i", in, "--photo", "--simplify", "aggressive"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
 			name:    "photo mode with edge stroke",
 			args:    func(in string) []string { return []string{"-i", in, "--photo", "--edge", "stroke"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
 			name:    "photo mode with edge crisp",
 			args:    func(in string) []string { return []string{"-i", in, "--photo", "--edge", "crisp"} },
-			wantOut: func(dir string) string { return filepath.Join(dir, "shapes.photo.svg") },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
 			name:        "no mode selected",
@@ -425,7 +425,7 @@ func TestRunModeMatrix(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			inputPath := filepath.Join(dir, "shapes.png")
+			inputPath := filepath.Join(dir, "squirrel.png")
 			copyFile(t, fixturePath, inputPath)
 
 			var stdout, stderr bytes.Buffer

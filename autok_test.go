@@ -139,22 +139,24 @@ func TestAutoKTauAffectsOutputWhenAutoKOn(t *testing.T) {
 	}
 }
 
-// goldenShapesDefaultSHA256 is the sha256 of DefaultConfig()'s SVG output for
-// testdata/shapes.png captured from the code base *before* the AutoK change.
-// It guards the AutoK=false path against any byte-level regression.
-const goldenShapesDefaultSHA256 = "39aac7a8e0c795fff4f61049757652559beb7011f8e883a9438613403c49436f"
+// goldenSquirrelDefaultSHA256 is the sha256 of DefaultConfig()'s SVG output for
+// testdata/squirrel.png downsampled to 256px. It guards the AutoK=false path
+// against any byte-level regression, and matches the perfMatrix squirrel_s50
+// case (DefaultConfig sensitivity is 50).
+const goldenSquirrelDefaultSHA256 = "cb90eb0b1c01d45283e0992f95ed2b5693500fb26558c975cab2e2703b99d7a6"
 
 func TestAutoKOffGoldenByteIdentical(t *testing.T) {
-	src, err := os.ReadFile("testdata/shapes.png")
+	src, err := os.ReadFile("testdata/squirrel.png")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := DefaultConfig() // AutoK is false by default
+	cfg.MaxDimensions = Dimensions{Width: 256, Height: 256}
 	out := convertBytes(t, src, cfg)
 	sum := sha256.Sum256(out)
-	if got := hex.EncodeToString(sum[:]); got != goldenShapesDefaultSHA256 {
+	if got := hex.EncodeToString(sum[:]); got != goldenSquirrelDefaultSHA256 {
 		t.Fatalf("AutoK=false output changed:\n got sha256 %s (%d bytes)\nwant sha256 %s",
-			got, len(out), goldenShapesDefaultSHA256)
+			got, len(out), goldenSquirrelDefaultSHA256)
 	}
 }
 

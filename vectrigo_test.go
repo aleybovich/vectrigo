@@ -99,8 +99,11 @@ func palette(t *testing.T, data []byte, cfg Config) map[string]bool {
 func TestEndToEndAllDecoders(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Sensitivity = 50
+	// Downsample the 1408x768 fixture to keep this decoder-matrix test fast; the
+	// working canvas becomes 256x140 while the SVG width/height report originals.
+	cfg.MaxDimensions = Dimensions{Width: 256, Height: 256}
 
-	for _, name := range []string{"shapes.png", "shapes.jpg", "shapes.webp"} {
+	for _, name := range []string{"squirrel.png", "squirrel.jpg", "squirrel.webp"} {
 		t.Run(name, func(t *testing.T) {
 			data := fixture(t, name)
 
@@ -113,15 +116,15 @@ func TestEndToEndAllDecoders(t *testing.T) {
 			if doc.xmlns != "http://www.w3.org/2000/svg" {
 				t.Errorf("xmlns = %q", doc.xmlns)
 			}
-			if doc.width != "96" || doc.height != "64" {
-				t.Errorf("width/height = %s/%s, want 96/64", doc.width, doc.height)
+			if doc.width != "1408" || doc.height != "768" {
+				t.Errorf("width/height = %s/%s, want 1408/768", doc.width, doc.height)
 			}
-			if doc.viewBox != "0 0 96 64" {
-				t.Errorf("viewBox = %q, want \"0 0 96 64\"", doc.viewBox)
+			if doc.viewBox != "0 0 256 140" {
+				t.Errorf("viewBox = %q, want \"0 0 256 140\"", doc.viewBox)
 			}
 
-			// Effective K for a 96x64 image (clamped by maxKForPixels).
-			k, _ := cfg.normalized().resolveDetail(96, 64)
+			// Effective K for the 256x140 working canvas (clamped by maxKForPixels).
+			k, _ := cfg.normalized().resolveDetail(256, 140)
 			if len(doc.fills) < 1 || len(doc.fills) > k {
 				t.Errorf("path count = %d, want in [1,%d]", len(doc.fills), k)
 			}
@@ -149,8 +152,9 @@ func TestEndToEndAllDecoders(t *testing.T) {
 }
 
 func TestEndToEndDeterministic(t *testing.T) {
-	data := fixture(t, "shapes.png")
+	data := fixture(t, "squirrel.png")
 	cfg := DefaultConfig()
+	cfg.MaxDimensions = Dimensions{Width: 256, Height: 256} // downsample for speed
 
 	var a, b bytes.Buffer
 	if err := Vectorize(bytes.NewReader(data), &a, cfg); err != nil {
@@ -165,8 +169,10 @@ func TestEndToEndDeterministic(t *testing.T) {
 }
 
 func TestEngineShareableConcurrent(t *testing.T) {
-	data := fixture(t, "shapes.png")
-	eng := NewEngine(DefaultConfig())
+	data := fixture(t, "squirrel.png")
+	cfg := DefaultConfig()
+	cfg.MaxDimensions = Dimensions{Width: 256, Height: 256} // downsample for speed
+	eng := NewEngine(cfg)
 
 	// Reference single-run output.
 	var ref bytes.Buffer
@@ -226,16 +232,18 @@ func TestErrorCases(t *testing.T) {
 // TestZeroValueConfigSemantics verifies a bare Config{} runs (Sensitivity 0 =
 // max posterization) and still yields a valid SVG.
 func TestZeroValueConfigSemantics(t *testing.T) {
-	data := fixture(t, "shapes.png")
+	data := fixture(t, "squirrel.png")
 	var buf bytes.Buffer
 	if err := Vectorize(bytes.NewReader(data), &buf, Config{}); err != nil {
 		t.Fatalf("Vectorize(Config{}): %v", err)
 	}
 	doc := parse(t, buf.Bytes())
-	if doc.viewBox != "0 0 96 64" {
+	// Bare Config{} leaves MaxDimensions at the 2048 default, so the 1408x768
+	// fixture is not downscaled.
+	if doc.viewBox != "0 0 1408 768" {
 		t.Errorf("viewBox = %q", doc.viewBox)
 	}
-	// Sensitivity 0 => derived K = 4 (clamped by maxKForPixels(6144)=6, so 4).
+	// Sensitivity 0 => derived K = 4 (maxKForPixels(1081344)=256, so unclamped).
 	if len(doc.fills) < 1 || len(doc.fills) > 4 {
 		t.Errorf("path count = %d, want in [1,4] at Sensitivity 0", len(doc.fills))
 	}

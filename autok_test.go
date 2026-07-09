@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/png"
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -140,12 +141,21 @@ func TestAutoKTauAffectsOutputWhenAutoKOn(t *testing.T) {
 }
 
 // goldenSquirrelDefaultSHA256 is the sha256 of DefaultConfig()'s SVG output for
-// testdata/squirrel.png downsampled to 256px. It guards the AutoK=false path
-// against any byte-level regression, and matches the perfMatrix squirrel_s50
-// case (DefaultConfig sensitivity is 50).
-const goldenSquirrelDefaultSHA256 = "cb90eb0b1c01d45283e0992f95ed2b5693500fb26558c975cab2e2703b99d7a6"
+// testdata/squirrel.png downsampled to 256px, keyed by GOARCH. It guards the
+// AutoK=false path against any byte-level regression, and matches the perfMatrix
+// squirrel_s50 case (DefaultConfig sensitivity is 50). The digest is per-arch
+// because emitted coordinate decimals can differ across architectures; see the
+// note on perfMatrixCase.want for the why and for how to re-capture.
+var goldenSquirrelDefaultSHA256 = map[string]string{
+	"arm64": "cb90eb0b1c01d45283e0992f95ed2b5693500fb26558c975cab2e2703b99d7a6",
+	"amd64": "bec508fdb800b2f2c3281c4cd667e17452fa1ad7c3d0a59f44308af60fbaa422",
+}
 
 func TestAutoKOffGoldenByteIdentical(t *testing.T) {
+	want := goldenSquirrelDefaultSHA256[runtime.GOARCH]
+	if want == "" {
+		t.Skipf("digest not baselined for GOARCH=%s", runtime.GOARCH)
+	}
 	src, err := os.ReadFile("testdata/squirrel.png")
 	if err != nil {
 		t.Fatal(err)
@@ -154,9 +164,9 @@ func TestAutoKOffGoldenByteIdentical(t *testing.T) {
 	cfg.MaxDimensions = Dimensions{Width: 256, Height: 256}
 	out := convertBytes(t, src, cfg)
 	sum := sha256.Sum256(out)
-	if got := hex.EncodeToString(sum[:]); got != goldenSquirrelDefaultSHA256 {
-		t.Fatalf("AutoK=false output changed:\n got sha256 %s (%d bytes)\nwant sha256 %s",
-			got, len(out), goldenSquirrelDefaultSHA256)
+	if got := hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("AutoK=false output changed (GOARCH=%s):\n got sha256 %s (%d bytes)\nwant sha256 %s",
+			runtime.GOARCH, got, len(out), want)
 	}
 }
 

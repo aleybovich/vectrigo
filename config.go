@@ -183,6 +183,35 @@ type Config struct {
 	// quantization output regardless of PhotoDetail.
 	Photo bool
 
+	// Gapless selects the GAPLESS quantization pipeline: colours are chosen by
+	// the same k-means quantization as the default mask pipeline (Sensitivity,
+	// AutoK, AutoKTau, K and TurdSize all apply exactly as usual and the
+	// posterized palette is identical), but the result is traced with photo
+	// mode's shared-boundary planar tracer instead of one bitmap mask per
+	// colour. Default false.
+	//
+	// This changes two things about the output, both fixing artifacts inherent
+	// to independent per-colour mask tracing:
+	//
+	//   - No seams. Adjacent shapes share exact boundary geometry and tile the
+	//     plane, so the sub-pixel gaps between independently traced masks
+	//     (visible as dark background streaks along every colour boundary)
+	//     cannot occur, and no background rect is needed.
+	//   - Contiguous shapes. Each SVG path is ONE spatially-connected area.
+	//     The mask pipeline emits one path per palette colour, aggregating every
+	//     same-coloured area across the whole image into a single element.
+	//
+	// TurdSize keeps its meaning with one twist: a speck below the threshold is
+	// ABSORBED into the neighbouring shape it shares the longest border with
+	// (recoloured, not deleted), since deleting it would tear a hole in the
+	// tiling. Boundaries are emitted as smoothed polylines (like photo mode)
+	// rather than fitted Bézier curves, so AlphaMax has no effect; PhotoSimplify
+	// and PhotoEdge apply, PhotoDetail does not (detail is governed by the
+	// quantization knobs). Precedence: Photo wins when both Photo and Gapless
+	// are set. When Gapless is false the mask pipeline is untouched and output
+	// stays byte-identical to the historical engine.
+	Gapless bool
+
 	// PhotoDetail is the bilateral range-sigma (σ_r) detail dial for photo mode
 	// (see [Config.Photo]); it is the primary detail-vs-smoothness knob and has
 	// NO effect when Photo is false.
@@ -197,10 +226,11 @@ type Config struct {
 	//   - ~28+: soft / abstract — low-contrast shading and small text blend away.
 	PhotoDetail float64
 
-	// PhotoSimplify is the boundary-simplification tolerance for photo mode
-	// (see [Config.Photo]), in working-image pixels: the maximum perpendicular
-	// deviation allowed when straightening region-boundary corner runs. It has
-	// NO effect when Photo is false.
+	// PhotoSimplify is the boundary-simplification tolerance for the
+	// region-traced modes ([Config.Photo] and [Config.Gapless]), in
+	// working-image pixels: the maximum perpendicular deviation allowed when
+	// straightening region-boundary corner runs. It has NO effect when both
+	// Photo and Gapless are false.
 	//
 	// Simplification is strictly OPT-IN: the zero value (a bare Config{}, and
 	// DefaultConfig's value) — and any value <= 0 or NaN — means OFF, the
@@ -219,8 +249,9 @@ type Config struct {
 	// at every setting.
 	PhotoSimplify float64
 
-	// PhotoEdge selects the anti-aliasing finish for photo mode (see
-	// [Config.Photo]); it has NO effect when Photo is false.
+	// PhotoEdge selects the anti-aliasing finish for the region-traced modes
+	// ([Config.Photo] and [Config.Gapless]); it has NO effect when both Photo
+	// and Gapless are false.
 	//
 	// The regions tile the plane exactly (shared boundaries), so no background
 	// is ever needed. The zero value, [PhotoEdgeCrisp] (a bare Config{}, and
@@ -249,6 +280,7 @@ func DefaultConfig() Config {
 		Workers:       0,
 		Precision:     2,
 		Photo:         false,
+		Gapless:       false,
 		PhotoDetail:   defaultPhotoDetail,
 		PhotoSimplify: 0,
 		PhotoEdge:     PhotoEdgeCrisp,

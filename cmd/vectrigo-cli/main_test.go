@@ -18,6 +18,7 @@ func TestOutputPath(t *testing.T) {
 		name        string
 		input       string
 		sensitivity int
+		gapless     bool
 		want        string
 	}{
 		{
@@ -25,6 +26,13 @@ func TestOutputPath(t *testing.T) {
 			input:       "photos/street.png",
 			sensitivity: 70,
 			want:        "photos/street.70.svg",
+		},
+		{
+			name:        "gapless inserts segment before .svg",
+			input:       "photos/street.png",
+			sensitivity: 70,
+			gapless:     true,
+			want:        "photos/street.70.gapless.svg",
 		},
 		{
 			name:        "absolute jpeg path",
@@ -60,10 +68,10 @@ func TestOutputPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := outputPath(tt.input, tt.sensitivity)
+			got := outputPath(tt.input, tt.sensitivity, tt.gapless)
 			want := filepath.FromSlash(tt.want)
 			if got != want {
-				t.Errorf("outputPath(%q, %d) = %q, want %q", tt.input, tt.sensitivity, got, want)
+				t.Errorf("outputPath(%q, %d, %v) = %q, want %q", tt.input, tt.sensitivity, tt.gapless, got, want)
 			}
 		})
 	}
@@ -71,14 +79,21 @@ func TestOutputPath(t *testing.T) {
 
 func TestAutoOutputPath(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name    string
+		input   string
+		gapless bool
+		want    string
 	}{
 		{
 			name:  "png with subdirectory",
 			input: "photos/street.png",
 			want:  "photos/street.svg",
+		},
+		{
+			name:    "gapless inserts segment before .svg",
+			input:   "photos/street.png",
+			gapless: true,
+			want:    "photos/street.gapless.svg",
 		},
 		{
 			name:  "absolute jpeg path",
@@ -104,10 +119,10 @@ func TestAutoOutputPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := autoOutputPath(tt.input)
+			got := autoOutputPath(tt.input, tt.gapless)
 			want := filepath.FromSlash(tt.want)
 			if got != want {
-				t.Errorf("autoOutputPath(%q) = %q, want %q", tt.input, got, want)
+				t.Errorf("autoOutputPath(%q, %v) = %q, want %q", tt.input, tt.gapless, got, want)
 			}
 		})
 	}
@@ -313,8 +328,46 @@ func TestRunModeMatrix(t *testing.T) {
 			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.photo.svg") },
 		},
 		{
+			name:    "gapless with sensitivity",
+			args:    func(in string) []string { return []string{"-i", in, "-s", "70", "--gapless"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.70.gapless.svg") },
+		},
+		{
+			name:    "gapless with auto-k",
+			args:    func(in string) []string { return []string{"-i", in, "--auto-k", "--gapless"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.gapless.svg") },
+		},
+		{
+			name:    "gapless with simplify",
+			args:    func(in string) []string { return []string{"-i", in, "-s", "70", "--gapless", "--simplify", "subtle"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.70.gapless.svg") },
+		},
+		{
+			name:    "gapless with edge stroke",
+			args:    func(in string) []string { return []string{"-i", in, "-s", "70", "--gapless", "--edge", "stroke"} },
+			wantOut: func(dir string) string { return filepath.Join(dir, "squirrel.70.gapless.svg") },
+		},
+		{
 			name:        "no mode selected",
 			args:        func(in string) []string { return []string{"-i", in} },
+			wantErr:     true,
+			errContains: "a mode is required",
+		},
+		{
+			name:        "gapless alone still needs a mode",
+			args:        func(in string) []string { return []string{"-i", in, "--gapless"} },
+			wantErr:     true,
+			errContains: "a mode is required",
+		},
+		{
+			name:        "gapless with photo is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--photo", "--gapless"} },
+			wantErr:     true,
+			errContains: "already gapless",
+		},
+		{
+			name:        "gapless with simplify but no mode is rejected",
+			args:        func(in string) []string { return []string{"-i", in, "--gapless", "--simplify", "subtle"} },
 			wantErr:     true,
 			errContains: "a mode is required",
 		},

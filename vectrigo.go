@@ -2,6 +2,7 @@ package vectrigo
 
 import (
 	"fmt"
+	"image/color"
 	"io"
 
 	"github.com/aleybovich/bitrace"
@@ -10,6 +11,7 @@ import (
 	"github.com/aleybovich/vectrigo/internal/normalize"
 	"github.com/aleybovich/vectrigo/internal/pipeline"
 	"github.com/aleybovich/vectrigo/internal/quantize"
+	"github.com/aleybovich/vectrigo/internal/regionize"
 	"github.com/aleybovich/vectrigo/internal/regiontrace"
 )
 
@@ -19,7 +21,6 @@ import (
 // knob: 3 iterations relax the pixel staircase into smooth region edges while
 // keeping the exact shared-boundary tiling that makes photo mode seam-free.
 const photoBoundarySmooth = 3
-
 
 // Vectorize reads a raster image (PNG/JPEG/WEBP) from r, converts it to SVG
 // using cfg, and writes the SVG document to w. It is stateless and safe for
@@ -60,19 +61,12 @@ func (e *Engine) Convert(r io.Reader, w io.Writer) error {
 	if e.cfg.Photo {
 		return e.convertPhoto(img, w)
 	}
+	if e.cfg.Gapless {
+		return e.convertGapless(img, w)
+	}
 
 	b := img.NRGBA.Bounds()
-	var k, turd int
-	if e.cfg.AutoK && e.cfg.K <= 0 {
-		// Auto-K: choose K from the image's colour complexity, ignoring
-		// Sensitivity. An explicit K (> 0) is a hard override and takes the
-		// resolveDetail path below instead. TurdSize is derived from the chosen
-		// K (or an explicit override), never from Sensitivity.
-		k = quantize.SelectK(img, maxKForPixels(b.Dx()*b.Dy()), e.cfg.AutoKTau)
-		turd = e.cfg.turdForK(k)
-	} else {
-		k, turd = e.cfg.resolveDetail(b.Dx(), b.Dy())
-	}
+	k, turd := e.resolveKTurd(b.Dx(), b.Dy(), img)
 
 	layers, err := quantize.Quantize(img, k)
 	if err != nil {
@@ -90,6 +84,70 @@ func (e *Engine) Convert(r io.Reader, w io.Writer) error {
 	}
 
 	if err := assemble.WriteSVG(w, traced, img, assemble.Options{
+		Optimize:  e.cfg.Optimize,
+		Precision: e.cfg.Precision,
+	}); err != nil {
+		return fmt.Errorf("vectrigo: assemble: %w", err)
+	}
+	return nil
+}
+
+// resolveKTurd returns the effective colour count K and speckle threshold for
+// the quantization-based pipelines (mask and gapless) on a W×H working image:
+// the auto-K path when [Config.AutoK] is set without an explicit K override,
+// the Sensitivity/K derivation otherwise. Both pipelines share it so a given
+// configuration always quantizes identically regardless of the tracer.
+func (e *Engine) resolveKTurd(W, H int, img normalize.Image) (k, turd int) {
+	if e.cfg.AutoK && e.cfg.K <= 0 {
+		// Auto-K: choose K from the image's colour complexity, ignoring
+		// Sensitivity. An explicit K (> 0) is a hard override and takes the
+		// resolveDetail path below instead. TurdSize is derived from the chosen
+		// K (or an explicit override), never from Sensitivity.
+		k = quantize.SelectK(img, maxKForPixels(W*H), e.cfg.AutoKTau)
+		return k, e.cfg.turdForK(k)
+	}
+	return e.cfg.resolveDetail(W, H)
+}
+
+// convertGapless runs the GAPLESS quantization pipeline, the hybrid of the two
+// others: colours come from the same k-means quantization as the mask pipeline
+// (so Sensitivity / AutoK / K / TurdSize all apply and the posterized palette
+// is identical), but tracing goes through photo mode's shared-boundary planar
+// tracer instead of per-colour masks. The k-means label map is first split
+// into 4-connected components with sub-speckle components absorbed into their
+// longest-border neighbour ([regionize.Regionize] — the gapless analogue of
+// bitrace's TurdSize), then the whole region map is traced as ONE planar
+// subdivision ([regiontrace.Trace]) so adjacent shapes share exact boundary
+// geometry: no seams between shapes, and every SVG path is one contiguous
+// area rather than a whole colour scattered across the image. It is selected
+// by [Config.Gapless] (Photo wins if both are set); with Gapless false the
+// mask pipeline is untouched and output stays byte-identical.
+func (e *Engine) convertGapless(img normalize.Image, w io.Writer) error {
+	b := img.NRGBA.Bounds()
+	k, turd := e.resolveKTurd(b.Dx(), b.Dy(), img)
+
+	labels, palette, err := quantize.Labels(img, k)
+	if err != nil {
+		return fmt.Errorf("vectrigo: quantize: %w", err)
+	}
+
+	res := regionize.Regionize(labels, b.Dx(), b.Dy(), turd)
+
+	// Region colours come straight from the cluster palette: same posterized
+	// look as the mask pipeline, just split into per-area shapes.
+	colors := make([]color.RGBA, res.NumRegions)
+	for id, c := range res.Cluster {
+		colors[id] = palette[c]
+	}
+
+	// Same boundary finish as photo mode: shared Laplacian smoothing relaxes
+	// the pixel staircase, opt-in simplification collapses straight-edge node
+	// runs, and both preserve the exact tiling (see regiontrace).
+	traceOpt := regiontrace.Options{Smooth: photoBoundarySmooth, Simplify: e.cfg.PhotoSimplify}
+	regions := regiontrace.Trace(res.Labels, b.Dx(), b.Dy(), res.NumRegions, traceOpt)
+
+	crisp := e.cfg.PhotoEdge == PhotoEdgeCrisp
+	if err := assemble.WriteRegions(w, regions, colors, res.Areas, img, crisp, assemble.Options{
 		Optimize:  e.cfg.Optimize,
 		Precision: e.cfg.Precision,
 	}); err != nil {

@@ -192,6 +192,57 @@ only valid with `--photo` (`--simplify` takes `subtle` or `aggressive`, unset
 means off; `--edge` takes `crisp` or `stroke`, unset means crisp), and the output
 is written next to the input with a `.photo.svg` extension.
 
+### Gapless mode (`Gapless`)
+
+The quantization pipeline traces each palette colour's bitmap **independently**
+(via `bitrace`). That has two visible consequences on complex images: adjacent
+shapes can disagree by sub-pixel amounts along shared edges, letting the
+background bleed through as dark seam streaks, and each colour becomes **one**
+SVG path aggregating every same-coloured area across the whole image. `Gapless`
+keeps the quantization (same `Sensitivity` / `AutoK` / `K` palette, same crisp
+posterized detail) but traces the result with photo mode's shared-boundary
+planar tracer instead: the k-means label map is split into spatially-connected
+regions and traced as one planar subdivision, so adjacent shapes share exact
+boundary geometry and **tile the plane with no seams**, and **every path is one
+contiguous area**.
+
+```go
+cfg := vectrigo.DefaultConfig()
+cfg.AutoK = true   // or Sensitivity / K — all quantization knobs apply as usual
+cfg.Gapless = true // trace gapless: no seams, contiguous shapes
+```
+
+- **Off by default.** `Gapless` is `false` in both `DefaultConfig()` and the
+  zero `Config{}`; while it stays off the quantization output is byte-identical
+  to the historical engine.
+- **All quantization knobs apply** — `Sensitivity`, `AutoK`, `AutoKTau`, `K`
+  and `TurdSize` behave exactly as in the default pipeline. `TurdSize` keeps
+  its meaning with one twist: a sub-threshold speck is **absorbed** into the
+  neighbouring shape it shares the longest border with (recoloured, not
+  deleted), since deleting it would tear a hole in the tiling.
+- **`PhotoSimplify` and `PhotoEdge` apply** (they tune the shared region
+  tracer); `PhotoDetail` does not (detail is governed by the quantization
+  knobs). `AlphaMax` has no effect — boundaries are smoothed polylines, like
+  photo mode, not fitted Bézier curves.
+- **Precedence:** `Photo` wins when both `Photo` and `Gapless` are set (photo
+  mode is already gapless).
+- **File size:** maximum-fidelity gapless output has one path per connected
+  area, which on a complex image at a high `K` (e.g. auto-K's ceiling of 64)
+  can mean tens of thousands of paths. Lower `Sensitivity`, an explicit
+  `TurdSize`, or `PhotoSimplify` all shrink it.
+
+On the CLI, `--gapless` is a modifier on the two quantization modes and inserts
+a `gapless` segment into the output name:
+
+```sh
+vectrigo-cli -i photo.png --auto-k --gapless             # => photo.gapless.svg
+vectrigo-cli -i photo.png -s 70 --gapless                # => photo.70.gapless.svg
+vectrigo-cli -i photo.png --auto-k --gapless --simplify subtle
+```
+
+It is an error together with `--photo`; `--simplify` and `--edge` are valid
+with `--photo` or `--gapless`.
+
 ## Architecture: two pipelines
 
 Vectrigo has **two vectorization pipelines**. `Convert` (in `vectrigo.go`)
@@ -205,6 +256,12 @@ decodes the raster once, then branches on `Config.Photo`:
   whole label map as **one planar subdivision** (adjacent regions share their
   exact boundary, so fills tile with no seams). Far better on photographic /
   painterly images. Enabled by `Config.Photo` / `--photo`.
+
+A third, hybrid configuration — **gapless** (`Config.Gapless` / `--gapless`,
+see [Gapless mode](#gapless-mode-gapless)) — quantizes colours like the first
+pipeline but traces the result with the second pipeline's shared-boundary
+tracer (`internal/regionize` splits the k-means label map into connected
+regions, `internal/regiontrace` traces them seam-free).
 
 Both share the front-end (decode/normalize/optional downsample) and the SVG
 writer (`minisvg`). Stage-by-stage:
@@ -244,9 +301,10 @@ the default."
 | `Workers` | `int` | `0` (→ `runtime.NumCPU()`) | Tracing concurrency. `<= 0` resolves to `runtime.NumCPU()`; the effective value is further capped to the number of layers being traced. Applies in both quantization and `Photo` mode. |
 | `Precision` | `int` | `2` | Coordinate decimal-place count used when `Optimize` is on. Clamped to `[0, 6]`. Applies in both quantization and `Photo` mode. |
 | `Photo` | `bool` | `false` | Selects the region-first segmentation pipeline (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)) instead of the default colour-quantization pipeline. When `true`, `Sensitivity`, `K`, `AutoK`, `AutoKTau`, and `TurdSize` have no effect. When `false`, output is byte-identical to the historical quantization output regardless of `PhotoDetail`/`PhotoSimplify`/`PhotoEdge`. |
+| `Gapless` | `bool` | `false` | Selects the gapless hybrid pipeline (see [Gapless mode](#gapless-mode-gapless)): same k-means quantization (all quantization knobs apply; `TurdSize` absorbs specks into their longest-border neighbour instead of deleting them), but traced with photo mode's shared-boundary tracer — no seams between shapes, every path one contiguous area. `PhotoSimplify`/`PhotoEdge` apply; `AlphaMax` and `PhotoDetail` do not. `Photo` wins if both are set. When `false`, quantization output is byte-identical to the historical engine. |
 | `PhotoDetail` | `float64` | `12` (`segment.DefaultRangeSigma`) | Bilateral range-sigma (σ_r), the primary detail-vs-smoothness dial for `Photo` mode (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)). `0` (and NaN, and a bare `Config{}`) resolves to the default `12`; clamped to `[4, 60]`. Lower = punchier / more detail (region count climbs); higher = softer / more abstract. No effect when `Photo` is `false`. |
-| `PhotoSimplify` | `float64` | `0` (off) | **Opt-in** boundary-simplification tolerance (px) for `Photo` mode (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)): the node-count / file-size vs fidelity dial. `0` (the default; and any value `<= 0` or NaN) means **off** — every boundary corner kept, maximum fidelity. A positive tolerance is used as-is, clamped to `5.0`. Tuned presets: `PhotoSimplifySubtle` (`0.35`, near-lossless, ~3× fewer nodes) and `PhotoSimplifyAggressive` (`1.0`, smallest files, coarser). Runs once on the shared boundary graph, so the gapless tiling is preserved at every setting. No effect when `Photo` is `false`. |
-| `PhotoEdge` | `PhotoEdge` | `PhotoEdgeCrisp` (zero value) | Anti-aliasing finish for `Photo` mode region edges (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)): `PhotoEdgeCrisp` (crisp, seam-free, `shape-rendering="crispEdges"`) or `PhotoEdgeStroke` (anti-aliased, seams sealed with a thin same-colour stroke). Any out-of-range value is clamped to `PhotoEdgeCrisp`. No effect when `Photo` is `false`. |
+| `PhotoSimplify` | `float64` | `0` (off) | **Opt-in** boundary-simplification tolerance (px) for `Photo` mode (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)): the node-count / file-size vs fidelity dial. `0` (the default; and any value `<= 0` or NaN) means **off** — every boundary corner kept, maximum fidelity. A positive tolerance is used as-is, clamped to `5.0`. Tuned presets: `PhotoSimplifySubtle` (`0.35`, near-lossless, ~3× fewer nodes) and `PhotoSimplifyAggressive` (`1.0`, smallest files, coarser). Runs once on the shared boundary graph, so the gapless tiling is preserved at every setting. Applies in `Photo` and `Gapless` modes; no effect when both are `false`. |
+| `PhotoEdge` | `PhotoEdge` | `PhotoEdgeCrisp` (zero value) | Anti-aliasing finish for `Photo` mode region edges (see [Photo mode](#photo-mode-photo-photodetail-photosimplify-photoedge)): `PhotoEdgeCrisp` (crisp, seam-free, `shape-rendering="crispEdges"`) or `PhotoEdgeStroke` (anti-aliased, seams sealed with a thin same-colour stroke). Any out-of-range value is clamped to `PhotoEdgeCrisp`. Applies in `Photo` and `Gapless` modes; no effect when both are `false`. |
 
 ## License
 

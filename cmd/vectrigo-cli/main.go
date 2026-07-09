@@ -3,8 +3,8 @@
 //
 // Usage:
 //
-//	vectrigo-cli -i <image-path> -s <sensitivity>
-//	vectrigo-cli -i <image-path> --auto-k
+//	vectrigo-cli -i <image-path> -s <sensitivity> [--gapless [--simplify <subtle|aggressive>] [--edge <crisp|stroke>]]
+//	vectrigo-cli -i <image-path> --auto-k [--gapless [--simplify <subtle|aggressive>] [--edge <crisp|stroke>]]
 //	vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <subtle|aggressive>] [--edge <crisp|stroke>]
 //
 // The input image is given with --input/-i and is required. It must be a PNG,
@@ -38,8 +38,18 @@
 //     --photo.
 //
 // Exactly one of --sensitivity, --auto-k, or --photo must be supplied. Passing
-// more than one, or none, is an error; so is --sigma, --simplify or --edge
-// without --photo.
+// more than one, or none, is an error; so is --sigma without --photo, or
+// --simplify/--edge without --photo or --gapless.
+//
+// --gapless is a MODIFIER on the two quantization modes (--sensitivity and
+// --auto-k), selecting the gapless hybrid pipeline (see
+// [vectrigo.Config.Gapless]): the exact same quantized palette and detail, but
+// traced through photo mode's shared-boundary tracer, so adjacent shapes meet
+// with no seams (no dark background streaks along colour boundaries) and every
+// path is one contiguous area instead of a whole colour scattered across the
+// image. It is an error together with --photo (photo mode is already gapless).
+// Under --gapless, --simplify and --edge apply just as in photo mode; --sigma
+// does not (detail is governed by the quantization knobs).
 //
 // The resulting SVG is written next to the input file. The output name depends
 // on the mode:
@@ -52,6 +62,9 @@
 //     "photos/street.svg".
 //   - With --photo, the input's extension is replaced by ".photo.svg". For
 //     example, "photos/street.png" produces "photos/street.photo.svg".
+//   - --gapless inserts a "gapless" segment before ".svg": "photos/street.png"
+//     produces "photos/street.70.gapless.svg" (with -s 70) or
+//     "photos/street.gapless.svg" (with --auto-k).
 package main
 
 import (
@@ -67,8 +80,8 @@ import (
 )
 
 const usage = `Usage:
-  vectrigo-cli -i <image-path> -s <sensitivity>
-  vectrigo-cli -i <image-path> --auto-k
+  vectrigo-cli -i <image-path> -s <sensitivity> [--gapless]
+  vectrigo-cli -i <image-path> --auto-k [--gapless]
   vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <subtle|aggressive>] [--edge <crisp|stroke>]
 
 Vectorize a raster image (PNG/JPEG/WEBP) into an SVG file.
@@ -78,30 +91,37 @@ Options:
   -s, --sensitivity <0-100>   Integer detail knob for quantization (higher = more detail).
       --auto-k                Auto-select the colour count K from the image (no sensitivity).
       --photo                 Segmentation photo mode, for photographic images.
+      --gapless               Quantization modifier: same colours and detail, but traced with
+                              the shared-boundary tracer — no seams between shapes (no dark
+                              streaks along colour boundaries) and every path is one
+                              contiguous area. Valid with -s or --auto-k; error with --photo
+                              (photo mode is already gapless).
       --sigma <n>             Photo-mode detail dial (bilateral σ_r): ~8 punchy, 12 default,
                               28+ soft. Only valid with --photo; unset uses the default (12).
-      --simplify <strength>   Photo-mode boundary simplification (opt-in; unset = OFF,
-                              maximum fidelity). "subtle" is visually near-lossless with
-                              far fewer nodes on straight edges; "aggressive" gives the
-                              smallest files at visibly coarser shapes. Seams never open
-                              at any setting. Only valid with --photo.
-      --edge <crisp|stroke>   Photo-mode edge finish: crisp (default) disables edge
-                              anti-aliasing for a seam-free flat look; stroke keeps
-                              anti-aliasing and seals seams with a thin same-colour stroke.
-                              Only valid with --photo; unset uses the default (crisp).
+      --simplify <strength>   Boundary simplification (opt-in; unset = OFF, maximum
+                              fidelity). "subtle" is visually near-lossless with far fewer
+                              nodes on straight edges; "aggressive" gives the smallest
+                              files at visibly coarser shapes. Seams never open at any
+                              setting. Only valid with --photo or --gapless.
+      --edge <crisp|stroke>   Edge finish: crisp (default) disables edge anti-aliasing for
+                              a seam-free flat look; stroke keeps anti-aliasing and seals
+                              seams with a thin same-colour stroke. Only valid with --photo
+                              or --gapless; unset uses the default (crisp).
   -h, --help                  Show this help message.
 
 Modes (mutually exclusive):
   Supply --sensitivity for a fixed quantization detail level (best for flat / logo
   art), OR --auto-k to let the engine choose the colour count K automatically, OR
   --photo for the segmentation pipeline (best for photographic images). Exactly one
-  is required: passing more than one, or none, is an error. --sigma, --simplify and
-  --edge require --photo.
+  is required: passing more than one, or none, is an error. --gapless requires -s or
+  --auto-k; --sigma requires --photo; --simplify and --edge require --photo or
+  --gapless.
 
 The output SVG is written next to the input file:
   - with a sensitivity, the input's extension is replaced by ".<sensitivity>.svg".
   - with --auto-k, the input's extension is replaced by ".svg".
   - with --photo, the input's extension is replaced by ".photo.svg".
+  - --gapless inserts a "gapless" segment before ".svg".
 
 Examples:
   vectrigo-cli -i photos/street.png -s 70        =>  photos/street.70.svg
@@ -110,27 +130,37 @@ Examples:
   vectrigo-cli -i photos/street.png --photo --sigma 8  =>  photos/street.photo.svg
   vectrigo-cli -i photos/street.png --photo --simplify subtle  =>  photos/street.photo.svg
   vectrigo-cli -i photos/street.png --photo --edge stroke  =>  photos/street.photo.svg
+  vectrigo-cli -i photos/street.png --auto-k --gapless  =>  photos/street.gapless.svg
+  vectrigo-cli -i photos/street.png -s 70 --gapless     =>  photos/street.70.gapless.svg
 `
 
 // outputPath derives the output SVG path for a given input image path and
 // sensitivity value: the input's directory and base name (with its final
-// extension stripped), followed by ".<sensitivity>.svg".
-func outputPath(inputPath string, sensitivity int) string {
+// extension stripped), followed by ".<sensitivity>.svg" — or
+// ".<sensitivity>.gapless.svg" when the gapless modifier is on.
+func outputPath(inputPath string, sensitivity int, gapless bool) string {
 	dir := filepath.Dir(inputPath)
 	base := filepath.Base(inputPath)
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
+	if gapless {
+		return filepath.Join(dir, fmt.Sprintf("%s.%d.gapless.svg", stem, sensitivity))
+	}
 	return filepath.Join(dir, fmt.Sprintf("%s.%d.svg", stem, sensitivity))
 }
 
 // autoOutputPath derives the output SVG path for a given input image path in
 // auto-K mode: the input's directory and base name (with its final extension
-// stripped), followed by ".svg" (no sensitivity segment).
-func autoOutputPath(inputPath string) string {
+// stripped), followed by ".svg" (no sensitivity segment) — or ".gapless.svg"
+// when the gapless modifier is on.
+func autoOutputPath(inputPath string, gapless bool) string {
 	dir := filepath.Dir(inputPath)
 	base := filepath.Base(inputPath)
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
+	if gapless {
+		return filepath.Join(dir, stem+".gapless.svg")
+	}
 	return filepath.Join(dir, stem+".svg")
 }
 
@@ -166,6 +196,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		sensitivity int
 		autoK       bool
 		photo       bool
+		gapless     bool
 		sigma       float64
 		simplify    string
 		edge        string
@@ -182,6 +213,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.IntVar(&sensitivity, "s", -1, "integer detail knob in [0,100] (shorthand)")
 	fs.BoolVar(&autoK, "auto-k", false, "auto-select the colour count K from the image")
 	fs.BoolVar(&photo, "photo", false, "segmentation photo mode, for photographic images")
+	fs.BoolVar(&gapless, "gapless", false, "quantization modifier: trace with the shared-boundary tracer (no seams, contiguous shapes)")
 	// Default of NaN lets us detect whether --sigma was supplied without
 	// conflating it with any in-band value; an unset --sigma leaves PhotoDetail
 	// at the engine default.
@@ -237,22 +269,31 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("an input image (-i) is required")
 	}
 
+	// --gapless modifies the quantization modes; photo mode is already gapless,
+	// so combining the two is a contradiction worth surfacing.
+	if gapless && photo {
+		fmt.Fprint(stderr, usage)
+		return fmt.Errorf("--gapless requires -s or --auto-k; --photo is already gapless")
+	}
+
 	// --sigma only tunes photo mode; it is meaningless without --photo.
 	if sigmaSet && !photo {
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("--sigma requires --photo")
 	}
 
-	// --simplify only tunes photo mode; it is meaningless without --photo.
-	if simplifySet && !photo {
+	// --simplify only tunes the region-traced modes; it is meaningless without
+	// --photo or --gapless.
+	if simplifySet && !photo && !gapless {
 		fmt.Fprint(stderr, usage)
-		return fmt.Errorf("--simplify requires --photo")
+		return fmt.Errorf("--simplify requires --photo or --gapless")
 	}
 
-	// --edge only tunes photo mode; it is meaningless without --photo.
-	if edgeSet && !photo {
+	// --edge only tunes the region-traced modes; it is meaningless without
+	// --photo or --gapless.
+	if edgeSet && !photo && !gapless {
 		fmt.Fprint(stderr, usage)
-		return fmt.Errorf("--edge requires --photo")
+		return fmt.Errorf("--edge requires --photo or --gapless")
 	}
 
 	// Exactly one of the three modes must be selected.
@@ -289,8 +330,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	// --simplify accepts only the two named strengths; leaving it unset means
-	// no simplification at all.
-	if photo && simplifySet {
+	// no simplification at all. (Reaching here with it set implies --photo or
+	// --gapless.)
+	if simplifySet {
 		switch simplify {
 		case "subtle", "aggressive":
 		default:
@@ -300,7 +342,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	// --edge accepts only the two named finishes.
-	if photo && edgeSet {
+	if edgeSet {
 		switch edge {
 		case "crisp", "stroke":
 		default:
@@ -317,30 +359,33 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	var outPath string
 	cfg := vectrigo.DefaultConfig()
+	// --simplify and --edge apply to both region-traced modes (--photo and
+	// --gapless); unset leaves the DefaultConfig defaults (simplification off,
+	// crisp edges).
+	switch simplify {
+	case "subtle":
+		cfg.PhotoSimplify = vectrigo.PhotoSimplifySubtle
+	case "aggressive":
+		cfg.PhotoSimplify = vectrigo.PhotoSimplifyAggressive
+	}
+	if edgeSet && edge == "stroke" {
+		cfg.PhotoEdge = vectrigo.PhotoEdgeStroke
+	}
 	switch {
 	case photo:
 		cfg.Photo = true
 		if sigmaSet {
 			cfg.PhotoDetail = sigma
 		}
-		switch simplify {
-		case "subtle":
-			cfg.PhotoSimplify = vectrigo.PhotoSimplifySubtle
-		case "aggressive":
-			cfg.PhotoSimplify = vectrigo.PhotoSimplifyAggressive
-		}
-		// unset leaves the DefaultConfig default: simplification off.
-		if edgeSet && edge == "stroke" {
-			cfg.PhotoEdge = vectrigo.PhotoEdgeStroke
-		}
-		// crisp (or unset) leaves the DefaultConfig default, PhotoEdgeCrisp.
 		outPath = photoOutputPath(inputPath)
 	case autoK:
 		cfg.AutoK = true
-		outPath = autoOutputPath(inputPath)
+		cfg.Gapless = gapless
+		outPath = autoOutputPath(inputPath, gapless)
 	default:
 		cfg.Sensitivity = sensitivity
-		outPath = outputPath(inputPath, sensitivity)
+		cfg.Gapless = gapless
+		outPath = outputPath(inputPath, sensitivity, gapless)
 	}
 
 	out, err := os.Create(outPath)

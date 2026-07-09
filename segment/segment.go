@@ -159,10 +159,16 @@ const DefaultRangeSigma = 12
 // smoothing iterations. Callers adjust from here — most often [Options.K]
 // (region count) and [Options.RangeSigma] (detail vs smoothness, held at
 // [DefaultRangeSigma]).
+//
+// K = 60 with MinSize = 6 (rather than a coarser K with a smaller MinSize)
+// keeps small high-contrast features — an eye, sign lettering — as their own
+// regions instead of letting the FH predicate fold them into a large textured
+// neighbour whose internal contrast is already high, while MinSize absorbs the
+// extra speckle so the overall region count stays essentially unchanged.
 func DefaultOptions() Options {
 	return Options{
-		K:              100,
-		MinSize:        4,
+		K:              60,
+		MinSize:        6,
 		PreFilter:      PreFilterBilateral,
 		SpatialSigma:   2,
 		RangeSigma:     DefaultRangeSigma,
@@ -394,29 +400,68 @@ func relabel(dsu *disjoint, opaque []bool, n int, labels []int) int {
 	return next
 }
 
+// srgbToLinear maps an 8-bit sRGB channel value to its linear-light intensity
+// in [0,1], per the sRGB EOTF. Precomputed once; MeanColors sums through it.
+var srgbToLinear = func() (t [256]float64) {
+	for v := range t {
+		c := float64(v) / 255
+		if c <= 0.04045 {
+			t[v] = c / 12.92
+		} else {
+			t[v] = math.Pow((c+0.055)/1.055, 2.4)
+		}
+	}
+	return
+}()
+
+// linearToSRGB is the inverse of srgbToLinear: linear-light intensity in [0,1]
+// back to a rounded 8-bit sRGB channel value.
+func linearToSRGB(c float64) uint8 {
+	if c <= 0 {
+		return 0
+	}
+	var s float64
+	if c <= 0.0031308 {
+		s = c * 12.92
+	} else {
+		s = 1.055*math.Pow(c, 1/2.4) - 0.055
+	}
+	if s >= 1 {
+		return 255
+	}
+	return uint8(s*255 + 0.5)
+}
+
 // MeanColors returns the mean opaque colour of each region, indexed by region
 // id: the returned slice has length r.NumRegions and element k is the average
-// R,G,B,A of the pixels labelled k in img. Colours are computed from img
+// colour of the pixels labelled k in img. Colours are computed from img
 // (typically the original, unsmoothed image). Transparent pixels
 // (TransparentLabel) contribute to no region. A region always has at least one
 // pixel, so no divide-by-zero occurs.
+//
+// R, G and B are averaged in LINEAR light (gamma-decoded, then re-encoded):
+// averaging gamma-encoded sRGB bytes systematically underestimates the
+// brightness of mixed regions, so a region spanning highlight and shadow came
+// out visibly darker and duller than the area it replaces. Linear-light
+// averaging matches how the eye integrates the region's light. For a
+// single-colour region the result is exactly that colour, as before. Alpha is
+// coverage, not light, and keeps its arithmetic mean.
 func MeanColors(img *image.NRGBA, r Result) []color.RGBA {
 	pix := img.Pix
-	var sumR, sumG, sumB, sumA, cnt []uint64
-	sumR = make([]uint64, r.NumRegions)
-	sumG = make([]uint64, r.NumRegions)
-	sumB = make([]uint64, r.NumRegions)
-	sumA = make([]uint64, r.NumRegions)
-	cnt = make([]uint64, r.NumRegions)
+	sumR := make([]float64, r.NumRegions)
+	sumG := make([]float64, r.NumRegions)
+	sumB := make([]float64, r.NumRegions)
+	sumA := make([]uint64, r.NumRegions)
+	cnt := make([]uint64, r.NumRegions)
 
 	for i, lb := range r.Labels {
 		if lb < 0 {
 			continue
 		}
 		o := i * 4
-		sumR[lb] += uint64(pix[o])
-		sumG[lb] += uint64(pix[o+1])
-		sumB[lb] += uint64(pix[o+2])
+		sumR[lb] += srgbToLinear[pix[o]]
+		sumG[lb] += srgbToLinear[pix[o+1]]
+		sumB[lb] += srgbToLinear[pix[o+2]]
 		sumA[lb] += uint64(pix[o+3])
 		cnt[lb]++
 	}
@@ -428,10 +473,11 @@ func MeanColors(img *image.NRGBA, r Result) []color.RGBA {
 			out[k] = color.RGBA{A: 255}
 			continue
 		}
+		n := float64(c)
 		out[k] = color.RGBA{
-			R: uint8((sumR[k] + c/2) / c),
-			G: uint8((sumG[k] + c/2) / c),
-			B: uint8((sumB[k] + c/2) / c),
+			R: linearToSRGB(sumR[k] / n),
+			G: linearToSRGB(sumG[k] / n),
+			B: linearToSRGB(sumB[k] / n),
 			A: uint8((sumA[k] + c/2) / c),
 		}
 	}

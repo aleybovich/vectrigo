@@ -20,6 +20,7 @@ import (
 // keeping the exact shared-boundary tiling that makes photo mode seam-free.
 const photoBoundarySmooth = 3
 
+
 // Vectorize reads a raster image (PNG/JPEG/WEBP) from r, converts it to SVG
 // using cfg, and writes the SVG document to w. It is stateless and safe for
 // concurrent use.
@@ -105,7 +106,7 @@ func (e *Engine) Convert(r io.Reader, w io.Writer) error {
 // entirely untouched, so Photo=false output is byte-identical to the historical
 // engine. Errors keep the "vectrigo: <stage>:" convention.
 func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
-	// DefaultOptions is the segment library's tuned baseline (K=100, MinSize=4,
+	// DefaultOptions is the segment library's tuned baseline (K=60, MinSize=6,
 	// SpatialSigma=2, BoundarySmooth=3); only the range-sigma detail dial is
 	// exposed to callers, via PhotoDetail (already normalized/clamped).
 	opt := segment.DefaultOptions()
@@ -116,8 +117,11 @@ func (e *Engine) convertPhoto(img normalize.Image, w io.Writer) error {
 
 	// Trace the whole label map as one planar subdivision: adjacent regions share
 	// exact boundary geometry, so filled regions tile the plane gapless — no
-	// background is needed.
-	regions := regiontrace.Trace(res.Labels, res.W, res.H, res.NumRegions, regiontrace.Options{Smooth: photoBoundarySmooth})
+	// background is needed. Boundary simplification is the OPT-IN
+	// node-count/fidelity dial [Config.PhotoSimplify]: 0 (the default) keeps
+	// every corner; a positive tolerance collapses near-collinear runs.
+	traceOpt := regiontrace.Options{Smooth: photoBoundarySmooth, Simplify: e.cfg.PhotoSimplify}
+	regions := regiontrace.Trace(res.Labels, res.W, res.H, res.NumRegions, traceOpt)
 
 	// Per-region pixel area (region id -> pixel count) drives the largest-first
 	// paint order in the assembler.

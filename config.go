@@ -28,6 +28,26 @@ const (
 	// file size) explode; above ~60 the image dissolves into a few soft blobs.
 	minPhotoDetail = 4
 	maxPhotoDetail = 60
+
+	// maxPhotoSimplify is the upper clamp for [Config.PhotoSimplify]. Beyond a
+	// few pixels of tolerated deviation, region shapes visibly distort.
+	maxPhotoSimplify = 5.0
+)
+
+// Recommended presets for [Config.PhotoSimplify], the photo-mode boundary
+// simplification tolerance. Simplification is OFF by default (PhotoSimplify
+// 0); these are the two tuned opt-in strengths, exposed by the CLI as
+// --simplify subtle|aggressive.
+const (
+	// PhotoSimplifySubtle (~1/3 px) is visually near-lossless at crispEdges
+	// rendering while collapsing the nearly collinear corner runs that
+	// smoothing leaves on straight edges (roughly 3x fewer nodes / smaller
+	// files on typical content).
+	PhotoSimplifySubtle = 0.35
+
+	// PhotoSimplifyAggressive (1 px) trades visible geometric coarsening for
+	// the smallest files (roughly 5x fewer nodes on typical content).
+	PhotoSimplifyAggressive = 1.0
 )
 
 // Dimensions is a width/height pair in pixels.
@@ -177,6 +197,28 @@ type Config struct {
 	//   - ~28+: soft / abstract — low-contrast shading and small text blend away.
 	PhotoDetail float64
 
+	// PhotoSimplify is the boundary-simplification tolerance for photo mode
+	// (see [Config.Photo]), in working-image pixels: the maximum perpendicular
+	// deviation allowed when straightening region-boundary corner runs. It has
+	// NO effect when Photo is false.
+	//
+	// Simplification is strictly OPT-IN: the zero value (a bare Config{}, and
+	// DefaultConfig's value) — and any value <= 0 or NaN — means OFF, the
+	// maximum-fidelity geometry in which every boundary corner is kept. That
+	// costs many nodes on straight edges: smoothing leaves them as long runs
+	// of NEARLY collinear points, so each boundary pixel becomes an output
+	// node.
+	//
+	// A positive value enables simplification at that tolerance (clamped to
+	// 5.0), collapsing those runs while leaving curves intact. Use the tuned
+	// presets [PhotoSimplifySubtle] (0.35, visually near-lossless) and
+	// [PhotoSimplifyAggressive] (1.0, smallest files, visibly coarser shapes)
+	// unless you have a reason to pick your own number. Simplification is
+	// applied ONCE on the shared boundary graph, so the two regions flanking
+	// any edge always simplify identically and the gapless tiling is preserved
+	// at every setting.
+	PhotoSimplify float64
+
 	// PhotoEdge selects the anti-aliasing finish for photo mode (see
 	// [Config.Photo]); it has NO effect when Photo is false.
 	//
@@ -208,6 +250,7 @@ func DefaultConfig() Config {
 		Precision:     2,
 		Photo:         false,
 		PhotoDetail:   defaultPhotoDetail,
+		PhotoSimplify: 0,
 		PhotoEdge:     PhotoEdgeCrisp,
 	}
 }
@@ -259,6 +302,15 @@ func (c Config) normalized() Config {
 		c.PhotoDetail = defaultPhotoDetail
 	}
 	c.PhotoDetail = clampFloat(c.PhotoDetail, minPhotoDetail, maxPhotoDetail)
+
+	// PhotoSimplify: <= 0 and NaN all mean OFF; fold them to a canonical 0.
+	// A positive value is clamped to the sane maximum. Inert when Photo is
+	// false.
+	if math.IsNaN(c.PhotoSimplify) || c.PhotoSimplify < 0 {
+		c.PhotoSimplify = 0
+	} else if c.PhotoSimplify > maxPhotoSimplify {
+		c.PhotoSimplify = maxPhotoSimplify
+	}
 
 	// PhotoEdge: clamp any out-of-range value to the crisp default. Inert when
 	// Photo is false, but resolved unconditionally for predictability.

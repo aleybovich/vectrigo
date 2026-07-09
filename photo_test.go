@@ -147,10 +147,11 @@ func TestPhotoModeStrokeEdge(t *testing.T) {
 // TestPhotoDetailInertWhenPhotoFalse asserts PhotoDetail has NO effect on output
 // while Photo is false — the quantization path must ignore it entirely.
 func TestPhotoDetailInertWhenPhotoFalse(t *testing.T) {
-	data := fixture(t, "shapes.png")
+	data := fixture(t, "squirrel.png")
 
 	base := DefaultConfig()
 	base.Photo = false
+	base.MaxDimensions = Dimensions{Width: 256, Height: 256} // downsample for speed
 
 	cfgA := base
 	cfgA.PhotoDetail = 5
@@ -200,5 +201,41 @@ func TestPhotoModeDegenerate(t *testing.T) {
 				t.Error("degenerate photo SVG unexpectedly has a <rect background")
 			}
 		})
+	}
+}
+
+// TestPhotoSimplifyKnob verifies the opt-in PhotoSimplify dial is wired
+// end-to-end: the default (0) means OFF — maximum fidelity — and must emit
+// strictly more path data than the subtle preset, which must emit strictly
+// more than the aggressive preset. Negative (another spelling of off) must
+// match the default byte-for-byte.
+func TestPhotoSimplifyKnob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping heavy photo integration test in -short")
+	}
+	data := fixture(t, "street_market.png")
+
+	render := func(simplify float64) []byte {
+		cfg := DefaultConfig()
+		cfg.Photo = true
+		cfg.MaxDimensions = Dimensions{Width: 256, Height: 256}
+		cfg.PhotoSimplify = simplify
+		var buf bytes.Buffer
+		if err := Vectorize(bytes.NewReader(data), &buf, cfg); err != nil {
+			t.Fatalf("Vectorize photo (simplify=%v): %v", simplify, err)
+		}
+		return buf.Bytes()
+	}
+
+	off := render(0) // the default: simplification off
+	subtle := render(PhotoSimplifySubtle)
+	aggressive := render(PhotoSimplifyAggressive)
+
+	if !(len(off) > len(subtle) && len(subtle) > len(aggressive)) {
+		t.Fatalf("PhotoSimplify not monotone: off=%d subtle=%d aggressive=%d bytes", len(off), len(subtle), len(aggressive))
+	}
+	// Negative is just another spelling of off.
+	if !bytes.Equal(off, render(-1)) {
+		t.Fatal("negative PhotoSimplify differs from the off default")
 	}
 }

@@ -25,7 +25,7 @@ Rebuild after pulling engine changes so the binary stays in sync with the flags.
 ```
 vectrigo-cli -i <image-path> -s <sensitivity>
 vectrigo-cli -i <image-path> --auto-k
-vectrigo-cli -i <image-path> --photo [--sigma <n>] [--edge <crisp|stroke>]
+vectrigo-cli -i <image-path> --photo [--sigma <n>] [--simplify <subtle|aggressive>] [--edge <crisp|stroke>]
 ```
 
 The input is given with `--input`/`-i` and is required. Exactly **one mode** must
@@ -51,10 +51,11 @@ Vectrigo has two pipelines; the mode flags select between them:
 | `--auto-k` | quantization | Auto-select the colour count `K` from the image; no sensitivity used. |
 | `--photo` | segmentation | Use the region-first segmentation pipeline. |
 | `--sigma <n>` | photo only | Detail dial (bilateral σ_r): `~8` punchy, `12` default, `28+` soft. Range clamped to `[4,60]`. Only valid with `--photo`; unset = `12`. |
+| `--simplify <subtle\|aggressive>` | photo only | **Opt-in** boundary simplification (node-count / file-size reduction). Unset = **off** (maximum fidelity, most nodes). `subtle` is visually near-lossless with ~3× fewer nodes on straight edges; `aggressive` gives the smallest files at visibly coarser shapes. Seams never open at any setting. Only valid with `--photo`. |
 | `--edge <crisp\|stroke>` | photo only | Edge finish: `crisp` (default) disables edge anti-aliasing for a seam-free flat look; `stroke` keeps anti-aliasing and seals sub-pixel seams with a thin same-colour stroke. Only valid with `--photo`. |
 | `-h`, `--help` | — | Show help and exit. |
 
-`--sigma` and `--edge` require `--photo`; using them in another mode is an error.
+`--sigma`, `--simplify` and `--edge` require `--photo`; using them in another mode is an error.
 
 ## Output naming
 
@@ -75,11 +76,17 @@ vectrigo-cli -i logo.png -s 70                       # -> logo.70.svg
 # flat art — automatic colour count
 vectrigo-cli -i logo.png --auto-k                    # -> logo.svg
 
-# photograph — segmentation, defaults (crisp edges, sigma 12)
+# photograph — segmentation, defaults (crisp edges, sigma 12, no simplification)
 vectrigo-cli -i street.jpg --photo                   # -> street.photo.svg
 
 # photograph — punchier detail, anti-aliased stroke edges
 vectrigo-cli -i street.jpg --photo --sigma 8 --edge stroke
+
+# photograph — fewer nodes / smaller file, near-lossless
+vectrigo-cli -i street.jpg --photo --simplify subtle       # -> street.photo.svg
+
+# photograph — smallest file (coarser shapes)
+vectrigo-cli -i street.jpg --photo --simplify aggressive   # -> street.photo.svg
 ```
 
 ## Exit status

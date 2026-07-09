@@ -286,3 +286,203 @@ func TestDegenerate(t *testing.T) {
 		t.Fatalf("full grid area = %v, want 9", signedArea(fr[0].Loops[0]))
 	}
 }
+
+// totalPoints counts every emitted loop vertex across all regions.
+func totalPoints(regions []Region) int {
+	n := 0
+	for _, rg := range regions {
+		for _, l := range rg.Loops {
+			n += len(l)
+		}
+	}
+	return n
+}
+
+// TestSimplifyZeroIsNoop confirms Simplify == 0 (a bare Options) reproduces the
+// historical output exactly, both unsmoothed and smoothed.
+func TestSimplifyZeroIsNoop(t *testing.T) {
+	w, h := 16, 16
+	labels := diagLabels(w, h)
+	for _, sm := range []int{0, 3} {
+		a := Trace(labels, w, h, 2, Options{Smooth: sm})
+		b := Trace(labels, w, h, 2, Options{Smooth: sm, Simplify: 0})
+		if !reflect.DeepEqual(a, b) {
+			t.Fatalf("Simplify:0 changed output at Smooth=%d", sm)
+		}
+	}
+}
+
+// jaggedLabels builds a w×h label map split by an IRREGULAR jagged vertical
+// boundary (step widths vary), like a real image edge. Unlike a perfectly
+// regular staircase — whose smoothed corners land exactly collinear by
+// symmetry and collapse for free — an irregular edge smooths to corners that
+// are only NEARLY collinear, which is precisely the node-explosion case.
+func jaggedLabels(w, h int) []int {
+	labels := make([]int, w*h)
+	for y := 0; y < h; y++ {
+		// 1px-amplitude staircase with irregular step lengths: the digitization
+		// of a straight but non-45-degree edge (e.g. a ruled sign or hat brim).
+		split := w/2 + (y*13%3)%2
+		for x := 0; x < w; x++ {
+			if x >= split {
+				labels[y*w+x] = 1
+			}
+		}
+	}
+	return labels
+}
+
+// TestSimplifyCollapsesSmoothedStaircase is the node-explosion regression test:
+// a smoothed irregular edge is NEARLY collinear, so without simplification
+// nearly every boundary pixel survives as a vertex; with a sub-pixel tolerance
+// the run must collapse to a fraction of that, and each region's area must be
+// preserved to within tolerance x boundary-length.
+func TestSimplifyCollapsesSmoothedStaircase(t *testing.T) {
+	w, h := 64, 64
+	labels := jaggedLabels(w, h)
+	raw := Trace(labels, w, h, 2, Options{Smooth: 3})
+	simp := Trace(labels, w, h, 2, Options{Smooth: 3, Simplify: 0.35})
+
+	rawN, simpN := totalPoints(raw), totalPoints(simp)
+	if simpN >= rawN/4 {
+		t.Fatalf("simplification too weak: %d points -> %d, want < 1/4", rawN, simpN)
+	}
+	areaOf := func(regions []Region, id int) float64 {
+		var a float64
+		for _, rg := range regions {
+			if rg.ID != id {
+				continue
+			}
+			for _, l := range rg.Loops {
+				a += signedArea(l)
+			}
+		}
+		return a
+	}
+	for id := 0; id < 2; id++ {
+		got, want := areaOf(simp, id), areaOf(raw, id)
+		if math.Abs(got-want) > 0.35*float64(h)+1 {
+			t.Fatalf("region %d area drifted: %v -> %v", id, want, got)
+		}
+	}
+}
+
+// TestSimplifyKeepsSharing is the seam-safety guarantee: after simplification
+// the two regions flanking the staircase must still reference IDENTICAL vertex
+// geometry along the shared boundary — same points, so no gaps and no overlap.
+func TestSimplifyKeepsSharing(t *testing.T) {
+	w, h := 32, 32
+	labels := diagLabels(w, h)
+	regions := Trace(labels, w, h, 2, Options{Smooth: 3, Simplify: 0.35})
+	if len(regions) != 2 {
+		t.Fatalf("want 2 regions, got %d", len(regions))
+	}
+
+	// Collect each region's vertices that are NOT on the image border (i.e. on
+	// the shared diagonal). Every interior vertex of one region must appear in
+	// the other's vertex set: the shared chain is one global point sequence.
+	interior := func(rg Region) map[Point]bool {
+		s := map[Point]bool{}
+		for _, l := range rg.Loops {
+			for _, p := range l {
+				if p.X != 0 && p.X != float64(w) && p.Y != 0 && p.Y != float64(h) {
+					s[p] = true
+				}
+			}
+		}
+		return s
+	}
+	i0, i1 := interior(regions[0]), interior(regions[1])
+	if len(i0) == 0 || len(i1) == 0 {
+		t.Fatal("expected interior (shared-boundary) vertices in both regions")
+	}
+	for p := range i0 {
+		if !i1[p] {
+			t.Fatalf("vertex %+v on region 0's shared boundary missing from region 1: seam would open", p)
+		}
+	}
+	for p := range i1 {
+		if !i0[p] {
+			t.Fatalf("vertex %+v on region 1's shared boundary missing from region 0: seam would open", p)
+		}
+	}
+}
+
+// TestSimplifyDeterministic verifies identical inputs yield identical output
+// with simplification enabled, including on label maps with junctions and
+// pure-cycle (island) boundaries.
+func TestSimplifyDeterministic(t *testing.T) {
+	w, h, n := 24, 18, 3
+	labels := make([]int, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			labels[y*w+x] = ((x*3 + y*2) / 5) % n
+		}
+	}
+	// Carve an island (pure cycle boundary) into region 2's interior.
+	for y := 6; y < 12; y++ {
+		for x := 10; x < 16; x++ {
+			labels[y*w+x] = 2
+		}
+	}
+	for y := 8; y < 10; y++ {
+		for x := 12; x < 14; x++ {
+			labels[y*w+x] = 0
+		}
+	}
+	a := Trace(labels, w, h, n, Options{Smooth: 3, Simplify: 0.35})
+	b := Trace(labels, w, h, n, Options{Smooth: 3, Simplify: 0.35})
+	if !reflect.DeepEqual(a, b) {
+		t.Fatal("Trace not deterministic with Simplify enabled")
+	}
+}
+
+// TestSimplifyIslandCycle checks a region strictly inside another (whose
+// boundary is a pure degree-2 cycle with no junction anchor) survives
+// simplification with its area intact, and its host's hole stays identical.
+func TestSimplifyIslandCycle(t *testing.T) {
+	w, h := 20, 20
+	labels := make([]int, w*h)
+	for y := 5; y < 15; y++ {
+		for x := 5; x < 15; x++ {
+			labels[y*w+x] = 1
+		}
+	}
+	regions := Trace(labels, w, h, 2, Options{Smooth: 3, Simplify: 0.35})
+	if len(regions) != 2 {
+		t.Fatalf("want 2 regions, got %d", len(regions))
+	}
+	byID := map[int]Region{}
+	for _, rg := range regions {
+		byID[rg.ID] = rg
+	}
+	var island float64
+	for _, l := range byID[1].Loops {
+		island += signedArea(l)
+	}
+	if math.Abs(island-100) > 20 { // 10x10 block, smoothing rounds corners a bit
+		t.Fatalf("island area = %v, want ~100", island)
+	}
+	// The host's hole must use exactly the island's outer geometry (negated
+	// winding): same vertex set.
+	islandPts := map[Point]bool{}
+	for _, l := range byID[1].Loops {
+		for _, p := range l {
+			islandPts[p] = true
+		}
+	}
+	holeFound := false
+	for _, l := range byID[0].Loops {
+		if signedArea(l) < 0 {
+			holeFound = true
+			for _, p := range l {
+				if !islandPts[p] {
+					t.Fatalf("host hole vertex %+v not shared with island: seam would open", p)
+				}
+			}
+		}
+	}
+	if !holeFound {
+		t.Fatal("host region has no hole loop for the island")
+	}
+}

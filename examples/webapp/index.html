@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vectrigo — raster → SVG</title>
+<style>
+  :root {
+    --bg: #14171c; --panel: #1c2028; --panel2: #232833; --line: #313846;
+    --fg: #e7ebf2; --dim: #97a1b2; --accent: #4f9dff; --accent2: #00e5c8;
+    --danger: #ff6b6b; --hi: #ff35d0;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header .tag { color: var(--dim); font-size: 12px; }
+  header .spacer { flex: 1; }
+  main { flex: 1; display: flex; min-height: 0; }
+  /* ---- controls panel ---- */
+  aside {
+    width: 320px; flex: none; overflow-y: auto; padding: 14px;
+    border-right: 1px solid var(--line); background: var(--panel);
+  }
+  .group { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .group:last-child { border-bottom: none; }
+  .group h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--dim); margin: 0 0 10px; font-weight: 650;
+  }
+  .field { margin-bottom: 11px; }
+  .field.hide { display: none; }
+  .field label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .field label .name { color: var(--fg); }
+  .field label .val { color: var(--accent2); font-variant-numeric: tabular-nums; font-size: 12px; }
+  .field .hint { color: var(--dim); font-size: 11px; margin-top: 3px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=number], select {
+    width: 100%; background: var(--panel2); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit;
+  }
+  .row2 { display: flex; gap: 8px; }
+  .row2 > * { flex: 1; }
+  .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .check input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button {
+    flex: 1; background: var(--panel2); color: var(--dim); border: none; padding: 8px 4px;
+    cursor: pointer; font: inherit; font-weight: 600;
+  }
+  .seg button.on { background: var(--accent); color: #06101d; }
+  button.primary {
+    width: 100%; background: var(--accent); color: #06101d; border: none; border-radius: 8px;
+    padding: 11px; font: inherit; font-weight: 700; cursor: pointer; font-size: 14px;
+  }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.ghost {
+    background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 10px; cursor: pointer; font: inherit;
+  }
+  button.ghost:hover { border-color: var(--accent); }
+  /* ---- stage ---- */
+  section.stage-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .toolbar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap;
+  }
+  .toolbar .stat { color: var(--dim); font-size: 12px; }
+  .toolbar .stat b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .toolbar .spacer { flex: 1; }
+  .swatches { display: flex; gap: 3px; flex-wrap: wrap; max-width: 260px; }
+  .swatches i { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(255,255,255,.15); display: block; }
+  #stage {
+    flex: 1; position: relative; overflow: hidden; min-height: 0;
+    background:
+      linear-gradient(45deg, #1a1e25 25%, transparent 25%, transparent 75%, #1a1e25 75%) 0 0/24px 24px,
+      linear-gradient(45deg, #1a1e25 25%, #171b21 25%, #171b21 75%, #1a1e25 75%) 12px 12px/24px 24px,
+      #171b21;
+    cursor: grab; user-select: none;
+  }
+  #stage.panning { cursor: grabbing; }
+  #canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  #canvas svg { display: block; }
+  #canvas svg :where(path, rect, polygon, circle) { cursor: crosshair; }
+  .placeholder {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--dim); text-align: center; padding: 20px; flex-direction: column; gap: 8px;
+  }
+  .selinfo {
+    position: absolute; left: 12px; bottom: 12px; background: rgba(20,23,28,.94);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+    display: none; align-items: center; gap: 8px; max-width: 320px;
+  }
+  .selinfo.show { display: flex; }
+  .selinfo .chip { width: 20px; height: 20px; border-radius: 4px; border: 1px solid rgba(255,255,255,.25); }
+  .selinfo code { color: var(--accent2); }
+  .err {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    color: var(--danger); padding: 24px; text-align: center;
+  }
+  .busy {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(20,23,28,.6); color: var(--fg); z-index: 5;
+  }
+  .busy.show, .err.show { display: flex; }
+  .spin { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; animation: sp .8s linear infinite; margin-right: 10px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .drop { border: 1.5px dashed var(--line); border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; }
+  .drop.over { border-color: var(--accent); background: rgba(79,157,255,.08); }
+  .drop small { color: var(--dim); display: block; margin-top: 4px; }
+  .thumb { max-width: 100%; max-height: 120px; border-radius: 6px; margin-top: 8px; display: none; }
+  kbd { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vectrigo</h1>
+  <span class="tag">raster → SVG · interactive tuner</span>
+  <span class="spacer"></span>
+  <span class="tag" id="dimTag"></span>
+</header>
+
+<main>
+  <aside>
+    <!-- Upload -->
+    <div class="group">
+      <h2>Image</h2>
+      <div class="drop" id="drop">
+        <div><b>Drop</b> a PNG / JPEG / WEBP<br>or click to choose</div>
+        <small id="fileName">no file selected</small>
+        <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+      <img class="thumb" id="thumb" alt="original preview">
+    </div>
+
+    <!-- Pipeline -->
+    <div class="group">
+      <h2>Pipeline</h2>
+      <div class="seg" id="pipeSeg">
+        <button data-pipe="sensitivity" class="on">Sensitivity</button>
+        <button data-pipe="autok">Auto-K</button>
+        <button data-pipe="photo">Photo</button>
+      </div>
+      <div class="field" id="f-gapless" style="margin-top:10px">
+        <label class="check"><input type="checkbox" id="gapless"><span class="name">Gapless tracing</span></label>
+        <div class="hint">Same colours, traced seam-free with contiguous shapes. Quantization modes only.</div>
+      </div>
+    </div>
+
+    <!-- Detail -->
+    <div class="group">
+      <h2>Detail</h2>
+      <div class="field" id="f-sensitivity">
+        <label><span class="name">Sensitivity</span><span class="val" id="v-sensitivity">50</span></label>
+        <input type="range" id="sensitivity" min="0" max="100" step="1" value="50">
+        <div class="hint">Higher → more colours &amp; detail.</div>
+      </div>
+      <div class="field" id="f-autoKTau">
+        <label><span class="name">Auto-K τ (knee)</span><span class="val" id="v-autoKTau">0.020</span></label>
+        <input type="range" id="autoKTau" min="0.005" max="0.2" step="0.005" value="0.02">
+        <div class="hint">Smaller → more colours / higher fidelity.</div>
+      </div>
+      <div class="field" id="f-photoDetail">
+        <label><span class="name">Photo detail σ<sub>r</sub></span><span class="val" id="v-photoDetail">12</span></label>
+        <input type="range" id="photoDetail" min="4" max="60" step="1" value="12">
+        <div class="hint">Lower → punchier; higher → softer / more abstract.</div>
+      </div>
+    </div>
+
+    <!-- Colour / speckle (quantization) -->
+    <div class="group" id="g-quant">
+      <h2>Colour &amp; speckle</h2>
+      <div class="field" id="f-k">
+        <label><span class="name">K override</span><span class="val" id="v-k">auto</span></label>
+        <input type="number" id="k" min="0" max="256" step="1" value="0">
+        <div class="hint">0 = derive from the detail dial. Otherwise force this colour count.</div>
+      </div>
+      <div class="field" id="f-turdSize">
+        <label><span class="name">Speckle (TurdSize)</span><span class="val" id="v-turdSize">derive</span></label>
+        <input type="number" id="turdSize" min="-1" max="256" step="1" value="0">
+        <div class="hint">0 = derive · −1 = keep every speck · &gt;0 = remove/absorb below N px.</div>
+      </div>
+    </div>
+
+    <!-- Boundary (region-traced: photo or gapless) -->
+    <div class="group" id="g-region">
+      <h2>Boundary &amp; edge</h2>
+      <div class="field" id="f-photoSimplify">
+        <label><span class="name">Simplify</span><span class="val" id="v-photoSimplify">off</span></label>
+        <input type="range" id="photoSimplify" min="0" max="3" step="0.05" value="0">
+        <div class="hint">0 = off (max nodes). ≈0.35 subtle, ≈1.0 aggressive.</div>
+      </div>
+      <div class="field" id="f-photoEdge">
+        <label><span class="name">Edge finish</span></label>
+        <select id="photoEdge">
+          <option value="crisp">Crisp (crispEdges, seam-free)</option>
+          <option value="stroke">Stroke (anti-aliased, sealed seams)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Corner smoothness (mask quantization or photo) -->
+    <div class="group" id="g-alpha">
+      <h2>Curves</h2>
+      <div class="field" id="f-alphaMax">
+        <label><span class="name">AlphaMax (smoothness)</span><span class="val" id="v-alphaMax">1.00</span></label>
+        <input type="range" id="alphaMax" min="0" max="1.334" step="0.017" value="1.0">
+        <div class="hint">Lower → angular; higher → smoother Bézier corners.</div>
+      </div>
+    </div>
+
+    <!-- General -->
+    <div class="group">
+      <h2>General</h2>
+      <div class="field">
+        <label class="check"><input type="checkbox" id="optimize" checked><span class="name">Optimize (minify + round)</span></label>
+      </div>
+      <div class="field" id="f-precision">
+        <label><span class="name">Precision (decimals)</span><span class="val" id="v-precision">2</span></label>
+        <input type="range" id="precision" min="0" max="6" step="1" value="2">
+      </div>
+      <div class="field">
+        <label><span class="name">Max dimensions (px)</span></label>
+        <div class="row2">
+          <input type="number" id="maxW" min="0" step="16" value="2048" title="max width">
+          <input type="number" id="maxH" min="0" step="16" value="2048" title="max height">
+        </div>
+        <div class="hint">Larger inputs are downsampled to fit before tracing.</div>
+      </div>
+    </div>
+
+    <button class="primary" id="convert" disabled>Convert</button>
+  </aside>
+
+  <!-- Result -->
+  <section class="stage-wrap">
+    <div class="toolbar">
+      <button class="ghost" id="zoomOut" title="zoom out">−</button>
+      <button class="ghost" id="zoomIn" title="zoom in">+</button>
+      <button class="ghost" id="fit" title="fit to view">Fit</button>
+      <span class="stat" id="zoomLabel">100%</span>
+      <span class="spacer"></span>
+      <span class="stat" id="stats">—</span>
+      <div class="swatches" id="swatches"></div>
+      <button class="ghost" id="download" disabled>Download SVG</button>
+    </div>
+    <div id="stage">
+      <div id="canvas"></div>
+      <div class="placeholder" id="placeholder">
+        <div style="font-size:15px">Upload an image and hit <b>Convert</b></div>
+        <div>Scroll to zoom · drag to pan · click a shape to outline it</div>
+      </div>
+      <div class="busy" id="busy"><span class="spin"></span>Converting…</div>
+      <div class="err" id="err"></div>
+      <div class="selinfo" id="selinfo">
+        <span class="chip" id="selChip"></span>
+        <span>fill <code id="selHex">—</code> · shape <code id="selIdx">—</code></span>
+        <button class="ghost" id="clearSel" style="padding:2px 8px">clear</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+// ---- state ----
+let pipeline = "sensitivity";
+let fileData = null;      // File object
+let lastSVG = "";         // last converted SVG text (for download)
+let view = { x: 0, y: 0, s: 1 };
+let selected = null;      // currently outlined element
+
+// ---- lever relevance ----
+// Which control groups/fields matter for the current pipeline + gapless state.
+function relevance() {
+  const gapless = $("gapless").checked;
+  const isSens = pipeline === "sensitivity";
+  const isAutoK = pipeline === "autok";
+  const isPhoto = pipeline === "photo";
+  const isQuant = isSens || isAutoK;
+  const region = isPhoto || (isQuant && gapless); // region-traced finish
+  return {
+    gapless: isQuant,
+    sensitivity: isSens,
+    autoKTau: isAutoK,
+    photoDetail: isPhoto,
+    quantGroup: isQuant,       // K + speckle
+    k: isQuant, turdSize: isQuant,
+    regionGroup: region,       // simplify + edge
+    photoSimplify: region, photoEdge: region,
+    alphaGroup: (isQuant && !gapless) || isPhoto,
+    alphaMax: (isQuant && !gapless) || isPhoto,
+  };
+}
+
+function applyRelevance() {
+  const r = relevance();
+  const setField = (id, on) => $("f-" + id).classList.toggle("hide", !on);
+  const setGroup = (id, on) => $(id).style.display = on ? "" : "none";
+  setField("gapless", r.gapless);
+  setField("sensitivity", r.sensitivity);
+  setField("autoKTau", r.autoKTau);
+  setField("photoDetail", r.photoDetail);
+  setField("k", r.k);
+  setField("turdSize", r.turdSize);
+  setField("photoSimplify", r.photoSimplify);
+  setField("photoEdge", r.photoEdge);
+  setField("alphaMax", r.alphaMax);
+  setGroup("g-quant", r.quantGroup);
+  setGroup("g-region", r.regionGroup);
+  setGroup("g-alpha", r.alphaGroup);
+}
+
+// ---- live value labels ----
+function bindVal(id, fmt) {
+  const el = $(id), out = $("v-" + id);
+  const upd = () => { out.textContent = fmt ? fmt(el.value) : el.value; };
+  el.addEventListener("input", upd); upd();
+}
+bindVal("sensitivity");
+bindVal("autoKTau", v => (+v).toFixed(3));
+bindVal("photoDetail");
+bindVal("alphaMax", v => (+v).toFixed(2));
+bindVal("precision");
+bindVal("photoSimplify", v => (+v === 0 ? "off" : (+v).toFixed(2)));
+$("k").addEventListener("input", e => $("v-k").textContent = (+e.target.value > 0 ? e.target.value : "auto"));
+$("turdSize").addEventListener("input", e => {
+  const v = +e.target.value;
+  $("v-turdSize").textContent = v === 0 ? "derive" : (v < 0 ? "keep all" : v);
+});
+
+// ---- pipeline selector ----
+$("pipeSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  pipeline = b.dataset.pipe;
+  [...$("pipeSeg").children].forEach(x => x.classList.toggle("on", x === b));
+  applyRelevance();
+});
+$("gapless").addEventListener("change", applyRelevance);
+applyRelevance();
+
+// ---- upload ----
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", e => loadFile(e.target.files[0]));
+["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => { if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+
+function loadFile(f) {
+  if (!f) return;
+  fileData = f;
+  $("fileName").textContent = f.name + " · " + Math.round(f.size / 1024) + " KB";
+  const url = URL.createObjectURL(f);
+  const t = $("thumb"); t.src = url; t.style.display = "block";
+  $("convert").disabled = false;
+}
+
+// ---- convert ----
+$("convert").addEventListener("click", convert);
+
+function num(id) { return $(id).value; }
+
+async function convert() {
+  if (!fileData) return;
+  const fd = new FormData();
+  fd.append("image", fileData);
+  fd.append("pipeline", pipeline);
+  fd.append("gapless", $("gapless").checked ? "1" : "0");
+  fd.append("sensitivity", num("sensitivity"));
+  fd.append("autoKTau", num("autoKTau"));
+  fd.append("photoDetail", num("photoDetail"));
+  fd.append("k", num("k"));
+  fd.append("turdSize", num("turdSize"));
+  fd.append("photoSimplify", num("photoSimplify"));
+  fd.append("photoEdge", $("photoEdge").value);
+  fd.append("alphaMax", num("alphaMax"));
+  fd.append("optimize", $("optimize").checked ? "1" : "0");
+  fd.append("precision", num("precision"));
+  fd.append("maxW", num("maxW"));
+  fd.append("maxH", num("maxH"));
+
+  $("busy").classList.add("show");
+  $("err").classList.remove("show");
+  $("convert").disabled = true;
+  try {
+    const res = await fetch("/convert", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ("HTTP " + res.status));
+    renderResult(data);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    $("busy").classList.remove("show");
+    $("convert").disabled = false;
+  }
+}
+
+function showError(msg) {
+  $("err").textContent = "⚠ " + msg;
+  $("err").classList.add("show");
+}
+
+// ---- render + stats ----
+function renderResult(data) {
+  lastSVG = data.svg;
+  clearSelection();
+  $("placeholder").style.display = "none";
+
+  // Inject inline SVG (strip any XML prolog so innerHTML is happy).
+  const svgText = data.svg.replace(/^\s*<\?xml[^>]*\?>\s*/i, "");
+  $("canvas").innerHTML = svgText;
+  const svg = $("canvas").querySelector("svg");
+  if (svg) { svg.style.width = data.width + "px"; svg.style.height = data.height + "px"; }
+
+  const kb = (data.bytes / 1024).toFixed(data.bytes > 1048576 ? 0 : 1);
+  $("stats").innerHTML =
+    `<b>${data.paths.toLocaleString()}</b> paths · <b>${data.colors}</b> colours · ` +
+    `<b>${data.width}×${data.height}</b> · <b>${kb}</b> KB · <b>${data.millis}</b> ms · ${data.pipeline}`;
+  $("dimTag").textContent = data.viewBox ? "viewBox " + data.viewBox : "";
+
+  const sw = $("swatches"); sw.innerHTML = "";
+  data.palette.slice(0, 40).forEach(c => {
+    const i = document.createElement("i"); i.style.background = c; i.title = c; sw.appendChild(i);
+  });
+
+  $("download").disabled = false;
+  fitView(data.width, data.height);
+  wireShapeClicks(svg);
+}
+
+// ---- download ----
+$("download").addEventListener("click", () => {
+  if (!lastSVG) return;
+  const blob = new Blob([lastSVG], { type: "image/svg+xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (fileData ? fileData.name.replace(/\.[^.]+$/, "") : "vectrigo") + ".svg";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// ---- zoom / pan ----
+const stage = $("stage"), canvas = $("canvas");
+function applyView() {
+  canvas.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.s})`;
+  $("zoomLabel").textContent = Math.round(view.s * 100) + "%";
+}
+function fitView(w, h) {
+  const r = stage.getBoundingClientRect();
+  const pad = 28;
+  const s = Math.min((r.width - pad) / w, (r.height - pad) / h, 1);
+  view.s = s > 0 ? s : 1;
+  view.x = (r.width - w * view.s) / 2;
+  view.y = (r.height - h * view.s) / 2;
+  applyView();
+}
+function zoomAt(cx, cy, factor) {
+  const r = stage.getBoundingClientRect();
+  const px = cx - r.left, py = cy - r.top;
+  const ns = Math.min(Math.max(view.s * factor, 0.02), 64);
+  // keep the point under the cursor fixed
+  view.x = px - (px - view.x) * (ns / view.s);
+  view.y = py - (py - view.y) * (ns / view.s);
+  view.s = ns;
+  applyView();
+}
+stage.addEventListener("wheel", e => {
+  e.preventDefault();
+  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+}, { passive: false });
+$("zoomIn").addEventListener("click", () => { const r = stage.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1.25); });
+$("zoomOut").addEventListener("click", () => { const r = stage.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1 / 1.25); });
+$("fit").addEventListener("click", () => { const svg = canvas.querySelector("svg"); if (svg) fitView(parseFloat(svg.style.width), parseFloat(svg.style.height)); });
+
+// drag to pan (distinguish from click via movement threshold)
+let drag = null;
+stage.addEventListener("pointerdown", e => {
+  drag = { x: e.clientX, y: e.clientY, ox: view.x, oy: view.y, moved: false };
+  stage.setPointerCapture(e.pointerId); stage.classList.add("panning");
+});
+stage.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+  view.x = drag.ox + dx; view.y = drag.oy + dy; applyView();
+});
+stage.addEventListener("pointerup", e => {
+  if (drag && !drag.moved) handleStageClick(e);
+  drag = null; stage.classList.remove("panning");
+});
+
+// ---- click a shape → outline it ----
+function wireShapeClicks() { /* handled via handleStageClick delegation */ }
+function handleStageClick(e) {
+  // Pointer capture (used for panning) redirects the event target to #stage,
+  // so hit-test the actual rendered element under the cursor instead.
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  const el = hit && hit.closest("path, rect, polygon, circle, ellipse");
+  if (!el || !canvas.contains(el)) { clearSelection(); return; }
+  selectShape(el);
+}
+function selectShape(el) {
+  if (selected) restore(selected);
+  selected = el;
+  el.dataset._stroke = el.getAttribute("stroke") || "";
+  el.dataset._sw = el.getAttribute("stroke-width") || "";
+  el.dataset._ve = el.getAttribute("vector-effect") || "";
+  el.setAttribute("stroke", "#ff35d0");
+  el.setAttribute("stroke-width", "2");
+  el.setAttribute("vector-effect", "non-scaling-stroke");
+  const fill = el.getAttribute("fill") || "(none)";
+  $("selChip").style.background = fill;
+  $("selHex").textContent = fill;
+  const all = [...canvas.querySelectorAll("path, rect, polygon, circle, ellipse")];
+  $("selIdx").textContent = "#" + (all.indexOf(el) + 1) + " of " + all.length;
+  $("selinfo").classList.add("show");
+}
+function restore(el) {
+  el.dataset._stroke ? el.setAttribute("stroke", el.dataset._stroke) : el.removeAttribute("stroke");
+  el.dataset._sw ? el.setAttribute("stroke-width", el.dataset._sw) : el.removeAttribute("stroke-width");
+  el.dataset._ve ? el.setAttribute("vector-effect", el.dataset._ve) : el.removeAttribute("vector-effect");
+}
+function clearSelection() {
+  if (selected) restore(selected);
+  selected = null;
+  $("selinfo").classList.remove("show");
+}
+$("clearSel").addEventListener("click", clearSelection);
+</script>
+</body>
+</html>
